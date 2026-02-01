@@ -67,15 +67,18 @@
       <el-button 
         type="primary" 
         size="large"
-        :disabled="!canCompose"
-        :loading="composing"
+        :disabled="!canCompose || isGlobalComposing"
+        :loading="isGlobalComposing"
         @click="handleCompose"
       >
         <el-icon><VideoCamera /></el-icon>
-        开始合成视频
+        {{ isGlobalComposing ? '正在合成中...' : '开始合成视频' }}
       </el-button>
-      <p class="action-hint" v-if="!canCompose">
+      <p class="action-hint" v-if="!canCompose && !isGlobalComposing">
         请确保所有段落都有图片和音频
+      </p>
+      <p class="action-hint" v-else-if="isGlobalComposing">
+        视频合成中，请耐心等待...
       </p>
     </div>
     
@@ -128,10 +131,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
-import { useSegmentStore, type Job } from '@/stores'
+import { useSegmentStore, useJobStore, type Job } from '@/stores'
 import { jobApi } from '@/api'
 
 const props = defineProps<{
@@ -139,6 +142,7 @@ const props = defineProps<{
 }>()
 
 const segmentStore = useSegmentStore()
+const jobStore = useJobStore()
 
 const composing = ref(false)
 const composeJobs = ref<Job[]>([])
@@ -148,6 +152,9 @@ const previewUrl = ref('')
 let pollTimer: number | null = null
 
 const segments = computed(() => segmentStore.segments)
+
+// 使用全局合成状态来禁用按钮
+const isGlobalComposing = computed(() => jobStore.isComposing || composing.value)
 
 const imageCount = computed(() => 
   segments.value.filter(s => s.selected_image_asset_id).length
@@ -187,6 +194,11 @@ const fetchComposeJobs = async () => {
   try {
     const res: any = await jobApi.list(props.projectId, { job_type: 'video_compose' })
     composeJobs.value = res.items
+    // 更新全局合成状态
+    const hasRunningJob = res.items.some(
+      (j: Job) => j.status === 'running' || j.status === 'queued'
+    )
+    jobStore.setComposing(hasRunningJob)
   } catch {
     // 静默处理
   }
@@ -227,10 +239,13 @@ const getJobStatusLabel = (status: string) => {
 
 const handleCompose = async () => {
   composing.value = true
+  jobStore.setComposing(true)
   try {
     await jobApi.composeVideo(props.projectId)
     ElMessage.success('视频合成任务已创建')
     fetchComposeJobs()
+  } catch {
+    jobStore.setComposing(false)
   } finally {
     composing.value = false
   }

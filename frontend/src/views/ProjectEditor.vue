@@ -17,9 +17,14 @@
           <el-icon><Download /></el-icon>
           导出
         </el-button>
-        <el-button type="primary" @click="handleCompose" :disabled="!canCompose">
+        <el-button 
+          type="primary" 
+          @click="handleCompose" 
+          :disabled="!canCompose"
+          :loading="isComposing"
+        >
           <el-icon><VideoCamera /></el-icon>
-          合成视频
+          {{ isComposing ? '合成中...' : '合成视频' }}
         </el-button>
       </div>
     </div>
@@ -64,7 +69,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { useProjectStore, useSegmentStore } from '@/stores'
+import { useProjectStore, useSegmentStore, useJobStore } from '@/stores'
 import { jobApi } from '@/api'
 import ConfigPanel from '@/components/ConfigPanel.vue'
 import ScriptPanel from '@/components/ScriptPanel.vue'
@@ -76,17 +81,23 @@ const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const segmentStore = useSegmentStore()
+const jobStore = useJobStore()
 
 const projectId = computed(() => Number(route.params.id))
 const project = computed(() => projectStore.currentProject)
 const loading = ref(false)
 const activeTab = ref('config')
 
+// 全局合成状态
+const isComposing = computed(() => jobStore.isComposing)
+
 onMounted(async () => {
   loading.value = true
   try {
     await projectStore.fetchProject(projectId.value)
     await segmentStore.fetchSegments(projectId.value)
+    // 获取任务列表以检查合成状态
+    await jobStore.fetchJobs(projectId.value)
   } finally {
     loading.value = false
   }
@@ -95,7 +106,7 @@ onMounted(async () => {
 const canCompose = computed(() => {
   const segments = segmentStore.segments
   // 检查是否所有段落都有选定的图片
-  return segments.length > 0 && segments.every(s => s.selected_image_asset_id)
+  return segments.length > 0 && segments.every(s => s.selected_image_asset_id) && !isComposing.value
 })
 
 const getStatusType = (status?: string) => {
@@ -134,11 +145,16 @@ const handleSegmentsUpdated = () => {
 }
 
 const handleCompose = async () => {
+  if (isComposing.value) return
+  jobStore.setComposing(true)
   try {
     await jobApi.composeVideo(projectId.value)
     ElMessage.success('视频合成任务已创建')
     activeTab.value = 'compose'
+    // 刷新任务列表
+    await jobStore.fetchJobs(projectId.value)
   } catch (e) {
+    jobStore.setComposing(false)
     // 错误已在拦截器处理
   }
 }

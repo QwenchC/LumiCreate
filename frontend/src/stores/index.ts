@@ -195,15 +195,31 @@ export const useSegmentStore = defineStore('segment', () => {
 export const useJobStore = defineStore('job', () => {
   const jobs = ref<Job[]>([])
   const loading = ref(false)
+  // 全局视频合成状态
+  const isComposing = ref(false)
   
   const fetchJobs = async (projectId: number) => {
     loading.value = true
     try {
       const res: any = await jobApi.list(projectId)
       jobs.value = res.items
+      // 检查是否有正在进行的视频合成任务
+      checkComposingStatus()
     } finally {
       loading.value = false
     }
+  }
+  
+  // 检查是否有正在进行的视频合成任务
+  const checkComposingStatus = () => {
+    isComposing.value = jobs.value.some(
+      j => j.job_type === 'video_compose' && (j.status === 'running' || j.status === 'queued')
+    )
+  }
+  
+  // 设置合成状态
+  const setComposing = (value: boolean) => {
+    isComposing.value = value
   }
   
   const runningJobs = computed(() => 
@@ -228,14 +244,18 @@ export const useJobStore = defineStore('job', () => {
     if (index !== -1) {
       jobs.value[index].status = 'canceled'
     }
+    checkComposingStatus()
   }
   
   return {
     jobs,
     loading,
+    isComposing,
     runningJobs,
     failedJobs,
     fetchJobs,
+    checkComposingStatus,
+    setComposing,
     retryJob,
     cancelJob,
   }

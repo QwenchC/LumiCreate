@@ -195,15 +195,40 @@ async def compose_project_video(
     db: AsyncSession = Depends(get_db)
 ):
     """合成项目视频"""
+    from app.services.video_composer import execute_video_composition
+    
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     
+    # 检查是否有正在进行的合成任务
+    running_job_result = await db.execute(
+        select(Job)
+        .where(Job.project_id == project_id)
+        .where(Job.job_type == JobType.VIDEO_COMPOSE)
+        .where(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+    )
+    if running_job_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="已有正在进行的视频合成任务")
+    
     job = await compose_video(db=db, project=project)
     
-    return {
-        "status": "success",
-        "message": "视频合成任务已创建",
-        "job_id": job.id
-    }
+    # 同步执行视频合成
+    gen_result = await execute_video_composition(db, job)
+    
+    if gen_result.get("success"):
+        return {
+            "status": "success",
+            "message": "视频合成完成",
+            "job_id": job.id,
+            "video_asset_id": gen_result.get("video_asset_id"),
+            "output_path": gen_result.get("output_path")
+        }
+    else:
+        return {
+            "status": "failed",
+            "message": "视频合成失败",
+            "job_id": job.id,
+            "error": gen_result.get("error")
+        }
