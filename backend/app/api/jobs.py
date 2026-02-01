@@ -97,6 +97,26 @@ async def retry_job(
     return {"status": "success", "message": "任务已重新排队"}
 
 
+@router.delete("/{job_id}")
+async def delete_job(
+    job_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """删除任务"""
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    if job.status in [JobStatus.QUEUED, JobStatus.RUNNING]:
+        raise HTTPException(status_code=400, detail="不能删除排队中或运行中的任务，请先取消")
+    
+    await db.delete(job)
+    await db.commit()
+    
+    return {"status": "success", "message": "任务已删除"}
+
+
 @router.post("/projects/{project_id}/retry-failed")
 async def retry_failed_jobs(
     project_id: int,

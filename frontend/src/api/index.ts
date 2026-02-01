@@ -155,6 +155,8 @@ export const jobApi = {
   
   retry: (id: number) => api.post(`/jobs/${id}/retry`),
   
+  delete: (id: number) => api.delete(`/jobs/${id}`),
+  
   retryFailed: (projectId: number, jobIds?: number[]) =>
     api.post(`/jobs/projects/${projectId}/retry-failed`, { job_ids: jobIds }),
   

@@ -91,11 +91,45 @@
           :key="job.id"
           class="job-item"
         >
-          <div class="job-info">
-            <el-tag :type="getJobStatusType(job.status)" size="small">
-              {{ getJobStatusLabel(job.status) }}
-            </el-tag>
-            <span class="job-time">{{ formatDate(job.created_at) }}</span>
+          <div class="job-header">
+            <div class="job-info">
+              <el-tag :type="getJobStatusType(job.status)" size="small">
+                {{ getJobStatusLabel(job.status) }}
+              </el-tag>
+              <span class="job-time">{{ formatDate(job.created_at) }}</span>
+            </div>
+            <div class="job-controls">
+              <!-- 取消按钮：仅排队中或运行中显示 -->
+              <el-button 
+                v-if="job.status === 'queued' || job.status === 'running'"
+                type="warning" 
+                size="small" 
+                @click="cancelJob(job)"
+                :loading="cancelingJobId === job.id"
+              >
+                <el-icon><Close /></el-icon>
+                取消
+              </el-button>
+              <!-- 删除按钮：已完成、失败、已取消时显示 -->
+              <el-popconfirm
+                v-if="job.status === 'succeeded' || job.status === 'failed' || job.status === 'canceled'"
+                title="确定要删除此任务记录吗？"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="deleteJob(job)"
+              >
+                <template #reference>
+                  <el-button 
+                    type="danger" 
+                    size="small"
+                    :loading="deletingJobId === job.id"
+                  >
+                    <el-icon><Delete /></el-icon>
+                    删除
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </div>
           </div>
           <el-progress 
             :percentage="job.progress" 
@@ -148,6 +182,8 @@ const composing = ref(false)
 const composeJobs = ref<Job[]>([])
 const showPreview = ref(false)
 const previewUrl = ref('')
+const cancelingJobId = ref<number | null>(null)
+const deletingJobId = ref<number | null>(null)
 
 let pollTimer: number | null = null
 
@@ -262,6 +298,32 @@ const previewVideo = (job: Job) => {
   if (job.result?.output_path) {
     previewUrl.value = `/api/assets/download?path=${encodeURIComponent(job.result.output_path)}`
     showPreview.value = true
+  }
+}
+
+const cancelJob = async (job: Job) => {
+  cancelingJobId.value = job.id
+  try {
+    await jobApi.cancel(job.id)
+    ElMessage.success('任务已取消')
+    fetchComposeJobs()
+  } catch {
+    // 错误已在拦截器处理
+  } finally {
+    cancelingJobId.value = null
+  }
+}
+
+const deleteJob = async (job: Job) => {
+  deletingJobId.value = job.id
+  try {
+    await jobApi.delete(job.id)
+    ElMessage.success('任务已删除')
+    fetchComposeJobs()
+  } catch {
+    // 错误已在拦截器处理
+  } finally {
+    deletingJobId.value = null
   }
 }
 </script>
@@ -417,16 +479,27 @@ const previewVideo = (job: Job) => {
   background: #f5f7fa;
   border-radius: 8px;
   
+  .job-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  
   .job-info {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 12px;
     
     .job-time {
       font-size: 13px;
       color: #909399;
     }
+  }
+  
+  .job-controls {
+    display: flex;
+    gap: 8px;
   }
   
   .job-actions {

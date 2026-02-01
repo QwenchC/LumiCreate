@@ -268,6 +268,17 @@ async def execute_video_composition(
         }
 
 
+def _resolve_asset_path(relative_path: str) -> Path:
+    """解析资产文件路径，处理 storage 前缀"""
+    path = Path(relative_path)
+    if str(path).startswith("storage"):
+        # 路径已包含 storage 前缀，直接使用相对于项目根目录的路径
+        return Path(".") / relative_path
+    else:
+        # 路径是相对于 STORAGE_PATH 的
+        return Path(settings.STORAGE_PATH) / relative_path
+
+
 async def _create_segment_video(
     segment: dict,
     config: dict,
@@ -280,9 +291,9 @@ async def _create_segment_video(
     duration_ms = segment.get("duration_ms", 3000)
     duration_seconds = duration_ms / 1000
     
-    # 构建完整路径
+    # 构建完整路径（处理 storage 前缀）
     if image_path:
-        full_image_path = Path(settings.STORAGE_PATH) / image_path
+        full_image_path = _resolve_asset_path(image_path)
         if not full_image_path.exists():
             logger.warning(f"图片文件不存在: {full_image_path}")
             return None
@@ -302,7 +313,7 @@ async def _create_segment_video(
     # 输入音频（如果有）
     has_audio = False
     if audio_path:
-        full_audio_path = Path(settings.STORAGE_PATH) / audio_path
+        full_audio_path = _resolve_asset_path(audio_path)
         if full_audio_path.exists():
             cmd.extend(["-i", str(full_audio_path)])
             has_audio = True
