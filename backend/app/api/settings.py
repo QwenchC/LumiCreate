@@ -26,6 +26,11 @@ class ComfyUISettings(BaseModel):
     default_workflow: str = ""
 
 
+class PollinationsSettings(BaseModel):
+    api_key: str = ""
+    model: str = "flux"  # 支持的模型: flux, turbo, flux-realism, flux-anime, flux-3d, any-dark, flux-pro
+
+
 class TTSSettings(BaseModel):
     engine: str = "edge-tts"
     sovits_url: str = "http://localhost:9880"
@@ -42,6 +47,7 @@ class StorageSettings(BaseModel):
 class SystemSettings(BaseModel):
     deepseek: DeepSeekSettings = DeepSeekSettings()
     comfyui: ComfyUISettings = ComfyUISettings()
+    pollinations: PollinationsSettings = PollinationsSettings()
     tts: TTSSettings = TTSSettings()
     ffmpeg: FFmpegSettings = FFmpegSettings()
     storage: StorageSettings = StorageSettings()
@@ -175,3 +181,37 @@ def get_comfyui_config() -> ComfyUISettings:
     """获取 ComfyUI 配置"""
     settings = load_settings()
     return settings.comfyui
+
+
+def get_pollinations_config() -> PollinationsSettings:
+    """获取 Pollinations 配置"""
+    settings = load_settings()
+    return settings.pollinations
+
+
+class PollinationsTestRequest(BaseModel):
+    api_key: str
+    model: str = "flux"
+
+
+@router.post("/test/pollinations")
+async def test_pollinations(request: PollinationsTestRequest):
+    """测试 Pollinations 连接"""
+    try:
+        # 生成一个小测试图片
+        url = f"https://image.pollinations.ai/prompt/test?model={request.model}&width=128&height=128&seed=42&nologo=true"
+        headers = {}
+        if request.api_key:
+            headers["Authorization"] = f"Bearer {request.api_key}"
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers, follow_redirects=True)
+            if response.status_code == 200 and response.headers.get("content-type", "").startswith("image"):
+                return {"status": "success", "message": "Pollinations 连接成功"}
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Pollinations 返回错误: {response.status_code}"
+                )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=400, detail=f"连接失败: {str(e)}")

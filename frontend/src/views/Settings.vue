@@ -59,7 +59,7 @@
           <el-icon><Picture /></el-icon>
           <h2>ComfyUI 配置</h2>
         </div>
-        <div class="section-desc">用于 AI 图片生成</div>
+        <div class="section-desc">用于本地 AI 图片生成（需要 GPU）</div>
         
         <el-form :model="settings.comfyui" label-width="140px" class="settings-form">
           <el-form-item label="API 地址" required>
@@ -83,6 +83,50 @@
               连接成功
             </el-tag>
             <el-tag v-else-if="comfyuiStatus === 'error'" type="danger" class="status-tag">
+              连接失败
+            </el-tag>
+          </el-form-item>
+        </el-form>
+      </div>
+      
+      <!-- Pollinations.ai 配置 -->
+      <div class="settings-section">
+        <div class="section-header">
+          <el-icon><Cloudy /></el-icon>
+          <h2>Pollinations.ai 配置</h2>
+        </div>
+        <div class="section-desc">云端 AI 图片生成（无需 GPU，推荐）</div>
+        
+        <el-form :model="settings.pollinations" label-width="140px" class="settings-form">
+          <el-form-item label="API Key">
+            <el-input 
+              v-model="settings.pollinations.api_key" 
+              type="password"
+              show-password
+              placeholder="可选，留空使用免费额度"
+            />
+            <div class="form-tip">API Key 可选，免费用户有速率限制</div>
+          </el-form-item>
+          <el-form-item label="默认模型">
+            <el-select v-model="settings.pollinations.model" placeholder="选择模型" style="width: 100%">
+              <el-option label="Flux (默认，质量均衡)" value="flux" />
+              <el-option label="Turbo (快速生成)" value="turbo" />
+              <el-option label="Flux Realism (写实风格)" value="flux-realism" />
+              <el-option label="Flux Anime (动漫风格)" value="flux-anime" />
+              <el-option label="Flux 3D (3D风格)" value="flux-3d" />
+              <el-option label="Any Dark (暗黑风格)" value="any-dark" />
+              <el-option label="Flux Pro (高质量)" value="flux-pro" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button @click="testPollinations" :loading="testingPollinations">
+              <el-icon><Connection /></el-icon>
+              测试连接
+            </el-button>
+            <el-tag v-if="pollinationsStatus === 'success'" type="success" class="status-tag">
+              连接成功
+            </el-tag>
+            <el-tag v-else-if="pollinationsStatus === 'error'" type="danger" class="status-tag">
               连接失败
             </el-tag>
           </el-form-item>
@@ -182,6 +226,10 @@ interface SystemSettings {
     api_url: string
     default_workflow: string
   }
+  pollinations: {
+    api_key: string
+    model: string
+  }
   tts: {
     engine: string
     sovits_url: string
@@ -204,6 +252,10 @@ const settings = ref<SystemSettings>({
     api_url: 'http://localhost:8188',
     default_workflow: ''
   },
+  pollinations: {
+    api_key: '',
+    model: 'flux'
+  },
   tts: {
     engine: 'edge-tts',
     sovits_url: 'http://localhost:9880'
@@ -219,10 +271,12 @@ const settings = ref<SystemSettings>({
 const saving = ref(false)
 const testingDeepSeek = ref(false)
 const testingComfyUI = ref(false)
+const testingPollinations = ref(false)
 const testingFFmpeg = ref(false)
 
 const deepseekStatus = ref<'success' | 'error' | ''>('')
 const comfyuiStatus = ref<'success' | 'error' | ''>('')
+const pollinationsStatus = ref<'success' | 'error' | ''>('')
 const ffmpegStatus = ref<'success' | 'error' | ''>('')
 const ffmpegVersion = ref('')
 
@@ -283,6 +337,24 @@ const testComfyUI = async () => {
     ElMessage.error('ComfyUI 连接失败，请确保 ComfyUI 正在运行')
   } finally {
     testingComfyUI.value = false
+  }
+}
+
+const testPollinations = async () => {
+  testingPollinations.value = true
+  pollinationsStatus.value = ''
+  try {
+    await api.post('/settings/test/pollinations', {
+      api_key: settings.value.pollinations.api_key,
+      model: settings.value.pollinations.model
+    })
+    pollinationsStatus.value = 'success'
+    ElMessage.success('Pollinations 连接成功')
+  } catch {
+    pollinationsStatus.value = 'error'
+    ElMessage.error('Pollinations 连接失败')
+  } finally {
+    testingPollinations.value = false
   }
 }
 
@@ -370,5 +442,11 @@ const testFFmpeg = async () => {
 
 .status-tag {
   margin-left: 12px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

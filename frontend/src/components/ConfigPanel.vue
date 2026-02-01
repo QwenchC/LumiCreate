@@ -313,22 +313,61 @@
           </el-row>
         </el-collapse-item>
         
-        <!-- ========== ComfyUI 出图配置 ========== -->
-        <el-collapse-item title="ComfyUI 出图配置" name="comfyui">
+        <!-- ========== 出图配置 ========== -->
+        <el-collapse-item title="出图配置" name="image_generation">
           <template #title>
             <span class="collapse-title">
               <el-icon><Picture /></el-icon>
-              ComfyUI 出图配置
+              出图配置
             </span>
           </template>
           
-          <!-- 画风设置 -->
+          <!-- 生图引擎选择 -->
           <div class="config-subsection">
-            <h4>画风设置</h4>
+            <h4>生图引擎</h4>
+            <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="引擎选择">
+                  <el-radio-group v-model="localConfig.image_generation.engine">
+                    <el-radio value="pollinations">
+                      <span class="engine-option">
+                        <strong>Pollinations.ai</strong>
+                        <el-tag size="small" type="success">推荐</el-tag>
+                      </span>
+                      <div class="engine-desc">云端生图，无需GPU，速度快</div>
+                    </el-radio>
+                    <el-radio value="comfyui">
+                      <span class="engine-option">
+                        <strong>ComfyUI</strong>
+                      </span>
+                      <div class="engine-desc">本地生图，需要GPU，可自定义工作流</div>
+                    </el-radio>
+                  </el-radio-group>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12" v-if="localConfig.image_generation.engine === 'pollinations'">
+                <el-form-item label="Pollinations 模型">
+                  <el-select v-model="localConfig.image_generation.pollinations_model" placeholder="选择模型">
+                    <el-option label="Flux (默认)" value="flux" />
+                    <el-option label="Turbo (快速)" value="turbo" />
+                    <el-option label="Flux Realism (写实)" value="flux-realism" />
+                    <el-option label="Flux Anime (动漫)" value="flux-anime" />
+                    <el-option label="Flux 3D" value="flux-3d" />
+                    <el-option label="Any Dark (暗黑)" value="any-dark" />
+                    <el-option label="Flux Pro (高质量)" value="flux-pro" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </div>
+          
+          <!-- 画风设置（通用） -->
+          <div class="config-subsection">
+            <h4>画风设置 <el-tag size="small" type="info">对所有引擎生效</el-tag></h4>
             <el-row :gutter="20">
               <el-col :span="8">
                 <el-form-item label="画风">
-                  <el-select v-model="localConfig.comfyui.style" placeholder="选择画风">
+                  <el-select v-model="localConfig.image_generation.style" placeholder="选择画风">
                     <el-option label="国风" value="国风" />
                     <el-option label="赛博" value="赛博" />
                     <el-option label="写实" value="写实" />
@@ -342,7 +381,7 @@
               </el-col>
               <el-col :span="8">
                 <el-form-item label="分辨率">
-                  <el-select v-model="localConfig.comfyui.resolution" placeholder="选择分辨率">
+                  <el-select v-model="localConfig.image_generation.resolution" placeholder="选择分辨率">
                     <el-option label="512" value="512" />
                     <el-option label="768" value="768" />
                     <el-option label="1024" value="1024" />
@@ -351,7 +390,7 @@
               </el-col>
               <el-col :span="8">
                 <el-form-item label="画面比例">
-                  <el-select v-model="localConfig.comfyui.aspect_ratio" placeholder="选择比例">
+                  <el-select v-model="localConfig.image_generation.aspect_ratio" placeholder="选择比例">
                     <el-option label="横屏16:9" value="横屏16:9" />
                     <el-option label="竖屏9:16" value="竖屏9:16" />
                     <el-option label="正方形1:1" value="正方形1:1" />
@@ -361,23 +400,23 @@
             </el-row>
           </div>
           
-          <!-- 采样参数 -->
-          <div class="config-subsection">
-            <h4>采样参数</h4>
+          <!-- ComfyUI 特有参数 -->
+          <div class="config-subsection" v-if="localConfig.image_generation.engine === 'comfyui'">
+            <h4>ComfyUI 采样参数</h4>
             <el-row :gutter="20">
               <el-col :span="8">
                 <el-form-item label="采样步数">
-                  <el-input-number v-model="localConfig.comfyui.steps" :min="1" :max="100" />
+                  <el-input-number v-model="localConfig.image_generation.steps" :min="1" :max="100" />
                 </el-form-item>
               </el-col>
               <el-col :span="8">
                 <el-form-item label="CFG Scale">
-                  <el-slider v-model="localConfig.comfyui.cfg_scale" :min="1" :max="20" :step="0.5" show-input />
+                  <el-slider v-model="localConfig.image_generation.cfg_scale" :min="1" :max="20" :step="0.5" show-input />
                 </el-form-item>
               </el-col>
               <el-col :span="8">
                 <el-form-item label="采样器">
-                  <el-select v-model="localConfig.comfyui.sampler" placeholder="选择采样器">
+                  <el-select v-model="localConfig.image_generation.sampler" placeholder="选择采样器">
                     <el-option label="Euler Ancestral" value="euler_ancestral" />
                     <el-option label="Euler" value="euler" />
                     <el-option label="DPM++ 2M" value="dpmpp_2m" />
@@ -390,12 +429,12 @@
             <el-row :gutter="20">
               <el-col :span="8">
                 <el-form-item label="随机种子">
-                  <el-input-number v-model="localConfig.comfyui.seed" :min="0" placeholder="留空随机" />
+                  <el-input-number v-model="localConfig.image_generation.seed" :min="0" placeholder="留空随机" />
                 </el-form-item>
               </el-col>
               <el-col :span="16">
                 <el-form-item label="负面提示词">
-                  <el-input v-model="localConfig.comfyui.negative_prompt" placeholder="low quality, blurry, watermark..." />
+                  <el-input v-model="localConfig.image_generation.negative_prompt" placeholder="low quality, blurry, watermark..." />
                 </el-form-item>
               </el-col>
             </el-row>
@@ -407,46 +446,46 @@
             <el-row :gutter="20">
               <el-col :span="8">
                 <el-form-item label="每段候选图数">
-                  <el-input-number v-model="localConfig.comfyui.candidates_per_segment" :min="1" :max="10" />
+                  <el-input-number v-model="localConfig.image_generation.candidates_per_segment" :min="1" :max="10" />
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :span="8" v-if="localConfig.image_generation.engine === 'comfyui'">
                 <el-form-item label="并行生成">
-                  <el-switch v-model="localConfig.comfyui.parallel_generation" />
+                  <el-switch v-model="localConfig.image_generation.parallel_generation" />
                 </el-form-item>
               </el-col>
               <el-col :span="8">
                 <el-form-item label="最大重试次数">
-                  <el-input-number v-model="localConfig.comfyui.max_retries" :min="0" :max="10" />
+                  <el-input-number v-model="localConfig.image_generation.max_retries" :min="0" :max="10" />
                 </el-form-item>
               </el-col>
             </el-row>
           </div>
           
-          <!-- 工作流设置 -->
-          <div class="config-subsection">
+          <!-- ComfyUI 工作流设置 -->
+          <div class="config-subsection" v-if="localConfig.image_generation.engine === 'comfyui'">
             <h4>工作流设置</h4>
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-form-item label="工作流ID">
-                  <el-input v-model="localConfig.comfyui.workflow_id" placeholder="ComfyUI工作流ID" />
+                  <el-input v-model="localConfig.image_generation.workflow_id" placeholder="ComfyUI工作流ID" />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="备用工作流ID">
-                  <el-input v-model="localConfig.comfyui.fallback_workflow_id" placeholder="失败时使用的备用工作流" />
+                  <el-input v-model="localConfig.image_generation.fallback_workflow_id" placeholder="失败时使用的备用工作流" />
                 </el-form-item>
               </el-col>
             </el-row>
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-form-item label="角色LoRA ID">
-                  <el-input v-model="localConfig.comfyui.character_lora_id" placeholder="主体一致性LoRA（预留）" />
+                  <el-input v-model="localConfig.image_generation.character_lora_id" placeholder="主体一致性LoRA（预留）" />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="参考图ID">
-                  <el-input v-model="localConfig.comfyui.reference_image_id" placeholder="参考图资产ID（预留）" />
+                  <el-input v-model="localConfig.image_generation.reference_image_id" placeholder="参考图资产ID（预留）" />
                 </el-form-item>
               </el-col>
             </el-row>
@@ -765,7 +804,7 @@ const emit = defineEmits<{
 const projectStore = useProjectStore()
 
 // 折叠面板激活项
-const activeCollapse = ref(['script_generation', 'comfyui'])
+const activeCollapse = ref(['script_generation', 'image_generation'])
 
 // 默认配置 - 与后端 Schema 完全对应
 const defaultConfig = {
@@ -813,6 +852,28 @@ const defaultConfig = {
     require_mood: false,
     require_shot_type: false
   },
+  image_generation: {
+    engine: 'pollinations',  // 'pollinations' 或 'comfyui'
+    pollinations_model: 'flux',
+    style: '国风',
+    resolution: '1024',
+    aspect_ratio: '竖屏9:16',
+    // ComfyUI 特有
+    workflow_id: null,
+    steps: 20,
+    cfg_scale: 7,
+    sampler: 'euler_ancestral',
+    seed: null,
+    negative_prompt: 'low quality, blurry, watermark, text, logo, bad anatomy',
+    // 通用
+    candidates_per_segment: 3,
+    parallel_generation: false,
+    max_retries: 3,
+    fallback_workflow_id: null,
+    character_lora_id: null,
+    reference_image_id: null
+  },
+  // 保留 comfyui 字段以兼容旧数据
   comfyui: {
     workflow_id: null,
     style: '国风',
@@ -1005,7 +1066,32 @@ const applyAiFill = () => {
     color: #606266;
     padding-bottom: 8px;
     border-bottom: 1px dashed #dcdfe6;
+    
+    .el-tag {
+      margin-left: 8px;
+      vertical-align: middle;
+    }
   }
+}
+
+.engine-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.engine-desc {
+  font-size: 12px;
+  color: #909399;
+  margin-left: 24px;
+  margin-top: 2px;
+}
+
+:deep(.el-radio) {
+  display: block;
+  margin-bottom: 12px;
+  height: auto;
+  line-height: 1.5;
 }
 
 .form-actions {

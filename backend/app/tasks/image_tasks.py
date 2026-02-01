@@ -1,5 +1,6 @@
 """
 图片生成 Celery 任务
+支持 ComfyUI 和 Pollinations.ai 两种生图方式
 """
 import asyncio
 import uuid
@@ -56,6 +57,7 @@ async def _generate_image_async(task, job_id: int):
             output_dir.mkdir(parents=True, exist_ok=True)
             
             generated_assets = []
+            engine = params.get("engine", "pollinations")
             
             for i in range(count):
                 # 更新进度
@@ -65,34 +67,72 @@ async def _generate_image_async(task, job_id: int):
                 # 生成种子
                 seed = params.get("seed") or uuid.uuid4().int % (2**32)
                 
-                # 构建 ComfyUI 工作流（简化示例）
-                workflow = _build_workflow(params, seed)
+                if engine == "pollinations":
+                    # 使用 Pollinations.ai 生成
+                    from app.services.pollinations_client import generate_image_pollinations
+                    
+                    image_filename = f"{uuid.uuid4()}.png"
+                    image_path = output_dir / image_filename
+                    
+                    result = await generate_image_pollinations(
+                        prompt=params["prompt"],
+                        output_path=image_path,
+                        width=params.get("width", 1024),
+                        height=params.get("height", 1024),
+                        seed=seed,
+                        model=params.get("pollinations_model", "flux"),
+                        translate=True  # 自动翻译中文
+                    )
+                    
+                    if not result.get("success"):
+                        raise Exception(result.get("error", "Pollinations 生成失败"))
+                    
+                    # 创建资产记录
+                    asset = Asset(
+                        project_id=job.project_id,
+                        segment_id=segment_id,
+                        asset_type=AssetType.IMAGE,
+                        file_path=str(image_path),
+                        file_name=image_filename,
+                        metadata={
+                            "engine": "pollinations",
+                            "seed": result.get("seed", seed),
+                            "prompt": result.get("prompt", params["prompt"]),
+                            "model": result.get("model"),
+                            "width": result.get("width"),
+                            "height": result.get("height")
+                        }
+                    )
+                else:
+                    # 使用 ComfyUI 生成
+                    workflow = _build_workflow(params, seed)
+                    
+                    # TODO: 实际调用 ComfyUI
+                    # image_paths = await call_comfyui_api(workflow, output_dir)
+                    
+                    # 模拟生成
+                    image_filename = f"{uuid.uuid4()}.png"
+                    image_path = output_dir / image_filename
+                    
+                    # 创建资产记录
+                    asset = Asset(
+                        project_id=job.project_id,
+                        segment_id=segment_id,
+                        asset_type=AssetType.IMAGE,
+                        file_path=str(image_path),
+                        file_name=image_filename,
+                        metadata={
+                            "engine": "comfyui",
+                            "seed": seed,
+                            "prompt": params["prompt"],
+                            "negative_prompt": params["negative_prompt"],
+                            "steps": params["steps"],
+                            "cfg_scale": params["cfg_scale"],
+                            "sampler": params["sampler"],
+                            "workflow_id": params.get("workflow_id")
+                        }
+                    )
                 
-                # 调用 ComfyUI
-                # image_paths = await call_comfyui_api(workflow, output_dir)
-                
-                # TODO: 实际调用 ComfyUI
-                # 这里模拟生成
-                image_filename = f"{uuid.uuid4()}.png"
-                image_path = output_dir / image_filename
-                
-                # 创建资产记录
-                asset = Asset(
-                    project_id=job.project_id,
-                    segment_id=segment_id,
-                    asset_type=AssetType.IMAGE,
-                    file_path=str(image_path),
-                    file_name=image_filename,
-                    metadata={
-                        "seed": seed,
-                        "prompt": params["prompt"],
-                        "negative_prompt": params["negative_prompt"],
-                        "steps": params["steps"],
-                        "cfg_scale": params["cfg_scale"],
-                        "sampler": params["sampler"],
-                        "workflow_id": params.get("workflow_id")
-                    }
-                )
                 db.add(asset)
                 generated_assets.append(asset)
             

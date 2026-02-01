@@ -1,12 +1,12 @@
 """
 图片生成服务
-使用 ComfyUI 生成段落配图
+支持 ComfyUI 和 Pollinations.ai 两种生图方式
 """
 import json
 import uuid
 import httpx
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -15,6 +15,82 @@ from app.models.segment import Segment, SegmentStatus
 from app.models.asset import Asset, AssetType
 from app.models.job import Job, JobType, JobStatus
 from app.core.config import settings
+
+
+# 画风映射 - 通用英文前缀
+STYLE_PREFIX_MAP = {
+    "国风": "chinese style, traditional, ",
+    "赛博": "cyberpunk, neon, futuristic, ",
+    "写实": "realistic, photorealistic, ",
+    "动漫": "anime style, illustration, ",
+    "暗黑": "dark, gothic, moody, ",
+    "油画": "oil painting, artistic, ",
+    "水彩": "watercolor, soft, artistic, ",
+    "极简": "minimalist, clean, simple, "
+}
+
+# 氛围映射
+MOOD_PREFIX_MAP = {
+    "紧张": "tense atmosphere, dramatic, ",
+    "温馨": "warm, cozy, soft lighting, ",
+    "热血": "dynamic, action, energetic, ",
+    "恐怖": "horror, eerie, dark shadows, ",
+    "轻松": "relaxed, peaceful, bright, ",
+    "悲伤": "melancholic, sad, gloomy, ",
+    "神秘": "mysterious, enigmatic, fog, "
+}
+
+
+def build_full_prompt(
+    base_prompt: str,
+    style: Optional[str] = None,
+    mood: Optional[str] = None
+) -> str:
+    """
+    构建完整的提示词
+    
+    Args:
+        base_prompt: 基础提示词
+        style: 画风
+        mood: 氛围
+    
+    Returns:
+        完整的提示词（英文前缀 + 基础提示词）
+    """
+    parts = []
+    
+    if mood and mood in MOOD_PREFIX_MAP:
+        parts.append(MOOD_PREFIX_MAP[mood])
+    
+    if style and style in STYLE_PREFIX_MAP:
+        parts.append(STYLE_PREFIX_MAP[style])
+    
+    parts.append(base_prompt)
+    
+    return "".join(parts)
+
+
+def calculate_dimensions(resolution: str, aspect_ratio: str) -> tuple:
+    """
+    根据分辨率和画面比例计算实际尺寸
+    
+    Returns:
+        (width, height)
+    """
+    base = int(resolution) if resolution else 1024
+    
+    if aspect_ratio == "竖屏9:16":
+        # 竖屏：宽度为 base，高度按比例
+        width = base
+        height = int(base * 16 / 9)
+    elif aspect_ratio == "横屏16:9":
+        # 横屏：高度为 base，宽度按比例
+        height = base
+        width = int(base * 16 / 9)
+    else:  # 正方形1:1
+        width = height = base
+    
+    return width, height
 
 
 async def generate_segment_images(
@@ -42,52 +118,50 @@ async def generate_segment_images(
         select(Project).where(Project.id == segment.project_id)
     )
     project = project_result.scalar_one()
-    comfyui_config = project.project_config.get("comfyui", {})
+    
+    # 获取图片生成配置（统一配置）
+    image_config = project.project_config.get("image_generation", {})
+    # 向后兼容：如果没有 image_generation，尝试使用 comfyui
+    if not image_config:
+        image_config = project.project_config.get("comfyui", {})
+    
+    # 获取生图引擎：pollinations 或 comfyui
+    engine = image_config.get("engine", "pollinations")
     
     # 构建任务参数
     prompt = override_prompt or segment.visual_prompt or ""
+    style = image_config.get("style", "国风")
     
-    # 添加风格前缀
-    style = comfyui_config.get("style", "国风")
-    style_prefix_map = {
-        "国风": "chinese style, traditional, ",
-        "赛博": "cyberpunk, neon, futuristic, ",
-        "写实": "realistic, photorealistic, ",
-        "动漫": "anime style, illustration, ",
-        "暗黑": "dark, gothic, moody, ",
-        "油画": "oil painting, artistic, ",
-        "水彩": "watercolor, soft, artistic, ",
-        "极简": "minimalist, clean, simple, "
-    }
-    style_prefix = style_prefix_map.get(style, "")
-    full_prompt = style_prefix + prompt
+    # 构建完整提示词（包含风格和氛围前缀）
+    full_prompt = build_full_prompt(
+        base_prompt=prompt,
+        style=style,
+        mood=segment.mood
+    )
     
-    # 添加氛围关键词
-    if segment.mood:
-        mood_map = {
-            "紧张": "tense atmosphere, dramatic, ",
-            "温馨": "warm, cozy, soft lighting, ",
-            "热血": "dynamic, action, energetic, ",
-            "恐怖": "horror, eerie, dark shadows, ",
-            "轻松": "relaxed, peaceful, bright, ",
-            "悲伤": "melancholic, sad, gloomy, ",
-            "神秘": "mysterious, enigmatic, fog, "
-        }
-        mood_prefix = mood_map.get(segment.mood, "")
-        full_prompt = mood_prefix + full_prompt
+    # 计算尺寸
+    resolution = image_config.get("resolution", "1024")
+    aspect_ratio = image_config.get("aspect_ratio", "竖屏9:16")
+    width, height = calculate_dimensions(resolution, aspect_ratio)
     
     job_params = {
         "segment_id": segment.id,
         "count": count,
         "prompt": full_prompt,
-        "negative_prompt": comfyui_config.get("negative_prompt", "low quality, blurry"),
+        "engine": engine,
+        "negative_prompt": image_config.get("negative_prompt", "low quality, blurry"),
         "seed": override_seed,
-        "steps": comfyui_config.get("steps", 20),
-        "cfg_scale": comfyui_config.get("cfg_scale", 7.0),
-        "sampler": comfyui_config.get("sampler", "euler_ancestral"),
-        "resolution": comfyui_config.get("resolution", "1024"),
-        "aspect_ratio": comfyui_config.get("aspect_ratio", "竖屏9:16"),
-        "workflow_id": comfyui_config.get("workflow_id")
+        "width": width,
+        "height": height,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+        # ComfyUI 特有参数
+        "steps": image_config.get("steps", 20),
+        "cfg_scale": image_config.get("cfg_scale", 7.0),
+        "sampler": image_config.get("sampler", "euler_ancestral"),
+        "workflow_id": image_config.get("workflow_id"),
+        # Pollinations 特有参数
+        "pollinations_model": image_config.get("pollinations_model", "flux")
     }
     
     # 创建任务
@@ -140,8 +214,10 @@ async def generate_all_images(
     segments = result.scalars().all()
     
     # 获取配置中的候选图数量
-    comfyui_config = project.project_config.get("comfyui", {})
-    count = comfyui_config.get("candidates_per_segment", 3)
+    image_config = project.project_config.get("image_generation", {})
+    if not image_config:
+        image_config = project.project_config.get("comfyui", {})
+    count = image_config.get("candidates_per_segment", 3)
     
     jobs = []
     for segment in segments:
