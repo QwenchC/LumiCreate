@@ -100,13 +100,52 @@ class ComfyUIClient:
                 path = WORKFLOWS_DIR / workflow_path
         else:
             # 使用默认工作流
-            path = WORKFLOWS_DIR / "Multi-LoRA-SD1.json"
+            path = WORKFLOWS_DIR / "simple.json"
         
         if not path.exists():
             raise FileNotFoundError(f"工作流文件不存在: {path}")
         
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
+    
+    def _find_node_by_class(self, workflow: Dict[str, Any], class_type: str) -> Optional[str]:
+        """
+        根据 class_type 查找节点ID
+        
+        Args:
+            workflow: 工作流字典
+            class_type: 节点类型名称
+            
+        Returns:
+            节点ID 或 None
+        """
+        for node_id, node_data in workflow.items():
+            if isinstance(node_data, dict) and node_data.get("class_type") == class_type:
+                return node_id
+        return None
+    
+    def _find_positive_prompt_node(self, workflow: Dict[str, Any]) -> Optional[str]:
+        """
+        查找正面提示词节点（连接到 KSampler 的 positive 输入）
+        """
+        # 先找 KSampler
+        ksampler_id = self._find_node_by_class(workflow, "KSampler")
+        if ksampler_id and "positive" in workflow[ksampler_id].get("inputs", {}):
+            positive_link = workflow[ksampler_id]["inputs"]["positive"]
+            if isinstance(positive_link, list) and len(positive_link) >= 1:
+                return str(positive_link[0])
+        return None
+    
+    def _find_negative_prompt_node(self, workflow: Dict[str, Any]) -> Optional[str]:
+        """
+        查找负面提示词节点（连接到 KSampler 的 negative 输入）
+        """
+        ksampler_id = self._find_node_by_class(workflow, "KSampler")
+        if ksampler_id and "negative" in workflow[ksampler_id].get("inputs", {}):
+            negative_link = workflow[ksampler_id]["inputs"]["negative"]
+            if isinstance(negative_link, list) and len(negative_link) >= 1:
+                return str(negative_link[0])
+        return None
     
     def modify_workflow(
         self,
@@ -117,17 +156,16 @@ class ComfyUIClient:
         width: int = 1024,
         height: int = 1024,
         steps: int = 20,
-        cfg_scale: float = 3.5,
+        cfg_scale: float = 7.0,
         batch_size: int = 1
     ) -> Dict[str, Any]:
         """
-        修改工作流参数
+        修改工作流参数（智能识别不同工作流结构）
         
-        根据 Multi-LoRA-SD1.json 的结构:
-        - 节点 7: 正面提示词 (CLIPTextEncode)
-        - 节点 8: 负面提示词 (CLIPTextEncode)
-        - 节点 5: KSampler (seed, steps, cfg)
-        - 节点 14: EmptyLatentImage (width, height, batch_size)
+        自动查找以下节点类型:
+        - CLIPTextEncode: 正面/负面提示词
+        - KSampler: seed, steps, cfg
+        - EmptyLatentImage: width, height, batch_size
         
         Args:
             workflow: 工作流字典
@@ -146,26 +184,35 @@ class ComfyUIClient:
         # 深拷贝避免修改原始工作流
         workflow = json.loads(json.dumps(workflow))
         
-        # 修改正面提示词 (节点 7)
-        if "7" in workflow:
-            workflow["7"]["inputs"]["text"] = prompt
+        # 智能查找正面提示词节点
+        positive_node = self._find_positive_prompt_node(workflow)
+        if positive_node and positive_node in workflow:
+            workflow[positive_node]["inputs"]["text"] = prompt
+            logger.debug(f"设置正面提示词到节点 {positive_node}")
         
-        # 修改负面提示词 (节点 8)
-        if "8" in workflow and negative_prompt:
-            workflow["8"]["inputs"]["text"] = negative_prompt
+        # 智能查找负面提示词节点
+        if negative_prompt:
+            negative_node = self._find_negative_prompt_node(workflow)
+            if negative_node and negative_node in workflow:
+                workflow[negative_node]["inputs"]["text"] = negative_prompt
+                logger.debug(f"设置负面提示词到节点 {negative_node}")
         
-        # 修改 KSampler 参数 (节点 5)
-        if "5" in workflow:
+        # 查找并修改 KSampler 参数
+        ksampler_id = self._find_node_by_class(workflow, "KSampler")
+        if ksampler_id:
             if seed is not None:
-                workflow["5"]["inputs"]["seed"] = seed
-            workflow["5"]["inputs"]["steps"] = steps
-            workflow["5"]["inputs"]["cfg"] = cfg_scale
+                workflow[ksampler_id]["inputs"]["seed"] = seed
+            workflow[ksampler_id]["inputs"]["steps"] = steps
+            workflow[ksampler_id]["inputs"]["cfg"] = cfg_scale
+            logger.debug(f"设置 KSampler 参数到节点 {ksampler_id}")
         
-        # 修改图片尺寸 (节点 14)
-        if "14" in workflow:
-            workflow["14"]["inputs"]["width"] = width
-            workflow["14"]["inputs"]["height"] = height
-            workflow["14"]["inputs"]["batch_size"] = batch_size
+        # 查找并修改图片尺寸
+        latent_id = self._find_node_by_class(workflow, "EmptyLatentImage")
+        if latent_id:
+            workflow[latent_id]["inputs"]["width"] = width
+            workflow[latent_id]["inputs"]["height"] = height
+            workflow[latent_id]["inputs"]["batch_size"] = batch_size
+            logger.debug(f"设置图片尺寸到节点 {latent_id}: {width}x{height}")
         
         return workflow
     

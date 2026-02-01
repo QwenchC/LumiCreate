@@ -475,7 +475,7 @@
                 <strong>工作流说明</strong>
               </template>
               工作流文件存放在 <code>backend/workflows/</code> 目录下。
-              留空则使用默认工作流 <code>Multi-LoRA-SD1.json</code>。
+              留空则使用默认工作流 <code>simple.json</code>。
               系统会自动替换工作流中的提示词、种子和尺寸参数。
             </el-alert>
             <el-row :gutter="20">
@@ -486,7 +486,8 @@
                     placeholder="选择工作流（留空使用默认）"
                     clearable
                   >
-                    <el-option label="Multi-LoRA-SD1.json (默认)" value="Multi-LoRA-SD1.json" />
+                    <el-option label="simple.json (默认)" value="simple.json" />
+                    <el-option label="Multi-LoRA-SD1.json (女性角色)" value="Multi-LoRA-SD1.json" />
                   </el-select>
                   <div class="form-tip">可在 backend/workflows/ 添加更多工作流</div>
                 </el-form-item>
