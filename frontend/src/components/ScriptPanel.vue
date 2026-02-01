@@ -29,7 +29,18 @@
           <span>{{ streamStatus }}</span>
         </template>
         <template #default>
-          <span class="char-count">已生成 {{ generatedChars }} 字符</span>
+          <div class="progress-info">
+            <span class="char-count">已生成 {{ generatedChars }} 字符</span>
+            <span v-if="generationProgress.totalChapters > 0" class="chapter-progress">
+              · 章节进度: {{ generationProgress.currentChapter }} / {{ generationProgress.totalChapters }}
+            </span>
+          </div>
+          <el-progress 
+            v-if="generationProgress.totalChapters > 0"
+            :percentage="Math.round((generationProgress.currentChapter / generationProgress.totalChapters) * 100)"
+            :stroke-width="8"
+            style="margin-top: 8px"
+          />
         </template>
       </el-alert>
     </div>
@@ -193,6 +204,11 @@ const editingSegment = ref<Partial<Segment>>({})
 // 流式生成状态
 const streamStatus = ref('准备生成...')
 const generatedChars = ref(0)
+const generationProgress = ref({
+  currentChapter: 0,
+  totalChapters: 0,
+  phase: ''
+})
 
 const segments = computed(() => segmentStore.segments)
 const currentSegment = computed(() => segmentStore.currentSegment)
@@ -210,10 +226,11 @@ const handleGenerate = async () => {
   rawScript.value = ''
   streamStatus.value = '正在连接服务器...'
   generatedChars.value = 0
+  generationProgress.value = { currentChapter: 0, totalChapters: 0, phase: '' }
   
   try {
-    // 使用流式生成
-    const response = await scriptApi.generateStream(props.projectId, { topic: topic.value })
+    // 使用分阶段流式生成（更适合长文本）
+    const response = await scriptApi.generatePhased(props.projectId, { topic: topic.value })
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
@@ -226,8 +243,11 @@ const handleGenerate = async () => {
     
     const decoder = new TextDecoder()
     let buffer = ''
+    let accumulatedSegments: any[] = []
+    let scriptTitle = ''
+    let scriptHook = ''
     
-    streamStatus.value = '正在生成文案...'
+    streamStatus.value = '正在生成大纲...'
     
     while (true) {
       const { done, value } = await reader.read()
@@ -245,19 +265,76 @@ const handleGenerate = async () => {
           if (!dataStr) continue
           
           try {
-            const data = JSON.parse(dataStr)
+            const event = JSON.parse(dataStr)
             
-            if (data.type === 'start') {
-              streamStatus.value = data.message || '开始生成...'
-            } else if (data.type === 'chunk') {
-              rawScript.value += data.content
+            if (event.type === 'progress') {
+              // 进度更新
+              const progress = event.data
+              generationProgress.value = {
+                currentChapter: progress.current_chapter || 0,
+                totalChapters: progress.total_chapters || 0,
+                phase: progress.phase || ''
+              }
+              streamStatus.value = progress.message || '生成中...'
+              
+            } else if (event.type === 'outline') {
+              // 大纲生成完成
+              const outline = event.data
+              scriptTitle = outline.title || ''
+              scriptHook = outline.hook || ''
+              generationProgress.value.totalChapters = outline.chapters?.length || 0
+              
+              // 显示大纲内容
+              rawScript.value = `【标题】${scriptTitle}\n\n【钩子】${scriptHook}\n\n【正在生成章节内容...】\n`
               generatedChars.value = rawScript.value.length
-            } else if (data.type === 'done') {
-              streamStatus.value = data.message || '生成完成'
-              script.value = { id: data.script_id }
-              ElMessage.success('文案生成成功')
-            } else if (data.type === 'error') {
-              throw new Error(data.message || '生成失败')
+              streamStatus.value = '大纲已生成，开始生成章节内容...'
+              
+            } else if (event.type === 'chapter') {
+              // 单个章节生成完成
+              const chapterData = event.data
+              const chapterSegments = chapterData.segments || []
+              accumulatedSegments.push(...chapterSegments)
+              
+              // 更新进度
+              generationProgress.value.currentChapter = chapterData.chapter_index + 1
+              
+              // 更新显示的文本
+              let fullText = `【标题】${scriptTitle}\n\n【钩子】${scriptHook}\n\n`
+              accumulatedSegments.forEach((seg, idx) => {
+                fullText += `---段落 ${idx + 1}---\n`
+                if (seg.segment_title) fullText += `[${seg.segment_title}]\n`
+                fullText += `${seg.narration_text}\n\n`
+              })
+              rawScript.value = fullText
+              generatedChars.value = rawScript.value.length
+              
+              streamStatus.value = `已完成 ${chapterData.chapter_index + 1}/${generationProgress.value.totalChapters} 章节`
+              
+            } else if (event.type === 'complete') {
+              // 全部生成完成
+              const finalData = event.data
+              scriptTitle = finalData.title || scriptTitle
+              scriptHook = finalData.hook || scriptHook
+              accumulatedSegments = finalData.segments || accumulatedSegments
+              
+              // 最终显示
+              let fullText = `【标题】${scriptTitle}\n\n【钩子】${scriptHook}\n\n`
+              accumulatedSegments.forEach((seg, idx) => {
+                fullText += `---段落 ${idx + 1}---\n`
+                if (seg.segment_title) fullText += `[${seg.segment_title}]\n`
+                fullText += `${seg.narration_text}\n\n`
+              })
+              rawScript.value = fullText
+              generatedChars.value = rawScript.value.length
+              streamStatus.value = '生成完成！'
+              
+            } else if (event.type === 'saved') {
+              // 保存成功
+              script.value = { id: event.script_id }
+              ElMessage.success(`文案生成成功！共 ${accumulatedSegments.length} 个段落，${generatedChars.value} 字符`)
+              
+            } else if (event.type === 'error') {
+              throw new Error(event.data?.message || '生成失败')
             }
           } catch (e) {
             if (e instanceof SyntaxError) {

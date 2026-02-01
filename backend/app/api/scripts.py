@@ -123,6 +123,120 @@ async def stream_generate_project_script(
     )
 
 
+@router.post("/projects/{project_id}/generate/phased")
+async def phased_generate_project_script(
+    project_id: int,
+    request: ScriptGenerateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    分阶段生成文案（SSE）- 推荐用于长文本
+    
+    生成流程：
+    1. 先生成大纲（标题、钩子、章节列表）
+    2. 逐章节生成详细段落内容
+    
+    SSE事件类型：
+    - progress: 进度更新
+    - outline: 大纲生成完成
+    - chapter: 单个章节生成完成
+    - complete: 全部生成完成
+    - error: 错误信息
+    """
+    from app.services.script_generator_v2 import generate_script_phased
+    from app.models.project import ProjectStatus
+    
+    # 验证项目存在
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    
+    # 获取配置
+    config = project.project_config.get("script_generation", {})
+    topic = request.topic or ""
+    additional_instructions = request.additional_instructions or ""
+    project_id_local = project.id
+    
+    async def event_stream():
+        """SSE 事件流生成器"""
+        final_data = None
+        
+        try:
+            async for event in generate_script_phased(
+                config=config,
+                topic=topic,
+                additional_instructions=additional_instructions
+            ):
+                event_type = event.get("type")
+                
+                # 记录完成数据
+                if event_type == "complete":
+                    final_data = event.get("data")
+                
+                # 发送SSE事件
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            
+            # 生成完成后保存到数据库
+            if final_data:
+                from app.db.database import async_session_factory
+                async with async_session_factory() as save_db:
+                    result = await save_db.execute(select(Project).where(Project.id == project_id_local))
+                    fresh_project = result.scalar_one_or_none()
+                    
+                    if fresh_project:
+                        from sqlalchemy import select as sql_select, func
+                        version_result = await save_db.execute(
+                            sql_select(func.max(Script.version)).where(Script.project_id == project_id_local)
+                        )
+                        current_max_version = version_result.scalar() or 0
+                        
+                        # 创建脚本记录
+                        script = Script(
+                            project_id=project_id_local,
+                            title=final_data.get("title", ""),
+                            hook=final_data.get("hook", ""),
+                            outline=final_data.get("outline", ""),
+                            raw_text=json.dumps(final_data, ensure_ascii=False),
+                            structured_content={
+                                "title": final_data.get("title"),
+                                "hook": final_data.get("hook"),
+                                "segments": final_data.get("segments", [])
+                            },
+                            generation_params={
+                                "topic": topic,
+                                "additional_instructions": additional_instructions,
+                                "config": config,
+                                "generation_mode": "phased"
+                            },
+                            version=current_max_version + 1
+                        )
+                        
+                        save_db.add(script)
+                        fresh_project.status = ProjectStatus.SCRIPT_READY
+                        await save_db.commit()
+                        await save_db.refresh(script)
+                        
+                        yield f"data: {json.dumps({'type': 'saved', 'script_id': script.id}, ensure_ascii=False)}\n\n"
+        
+        except Exception as e:
+            import traceback
+            error_detail = str(e)
+            print(f"分阶段生成错误: {error_detail}")
+            print(traceback.format_exc())
+            yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'生成失败: {error_detail}'}}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @router.post("/projects/{project_id}/parse", response_model=SegmentListResponse)
 async def parse_project_script(
     project_id: int,

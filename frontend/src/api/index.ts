@@ -63,10 +63,22 @@ export const scriptApi = {
   generate: (projectId: number, data?: { topic?: string; additional_instructions?: string }) =>
     api.post(`/scripts/projects/${projectId}/generate`, data || {}),
   
-  // 流式生成文案
+  // 流式生成文案（简单模式）
   generateStream: (projectId: number, data?: { topic?: string; additional_instructions?: string }) => {
     const body = JSON.stringify(data || {})
     return fetch(`/api/scripts/projects/${projectId}/generate/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body
+    })
+  },
+  
+  // 分阶段生成文案（推荐用于长文本）
+  generatePhased: (projectId: number, data?: { topic?: string; additional_instructions?: string }) => {
+    const body = JSON.stringify(data || {})
+    return fetch(`/api/scripts/projects/${projectId}/generate/phased`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
