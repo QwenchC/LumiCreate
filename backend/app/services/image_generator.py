@@ -298,9 +298,28 @@ async def execute_image_generation(
                         }
                     )
                 else:
-                    # ComfyUI - 暂时模拟
+                    # 使用 ComfyUI 生成
+                    from app.services.comfyui_client import generate_image_comfyui
+                    
                     image_filename = f"{uuid.uuid4()}.png"
                     image_path = output_dir / image_filename
+                    
+                    gen_result = await generate_image_comfyui(
+                        prompt=params["prompt"],
+                        output_path=image_path,
+                        negative_prompt=params.get("negative_prompt"),
+                        seed=seed,
+                        width=params.get("width", 1024),
+                        height=params.get("height", 1024),
+                        steps=params.get("steps", 20),
+                        cfg_scale=params.get("cfg_scale", 3.5),
+                        workflow_path=params.get("workflow_id")  # 可指定工作流
+                    )
+                    
+                    if not gen_result.get("success"):
+                        logger.warning(f"第 {i+1} 张图片生成失败 (ComfyUI): {gen_result.get('error')}")
+                        failed_count += 1
+                        continue
                     
                     asset = Asset(
                         project_id=job.project_id,
@@ -310,9 +329,12 @@ async def execute_image_generation(
                         file_name=image_filename,
                         metadata={
                             "engine": "comfyui",
-                            "seed": seed,
-                            "prompt": params["prompt"],
-                            "note": "ComfyUI 待实现实际调用"
+                            "seed": gen_result.get("seed", seed),
+                            "prompt": gen_result.get("prompt", params["prompt"]),
+                            "width": gen_result.get("width"),
+                            "height": gen_result.get("height"),
+                            "prompt_id": gen_result.get("prompt_id"),
+                            "comfyui_filename": gen_result.get("comfyui_filename")
                         }
                     )
                 

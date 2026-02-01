@@ -5,8 +5,8 @@
                      "model":  "deepseek-chat"
                  },
     "comfyui":  {
-                    "api_url":  "http://localhost:8188",
-                    "default_workflow":  ""
+                    "api_url":  "http://192.168.1.106:8188",
+                    "default_workflow":  "Multi-LoRA-SD1.json"
                 },
     "pollinations":  {
                          "api_key":  "sk_9Cu03BPb1G7AtlSayGmyPkZ0gsnPkp8w",
