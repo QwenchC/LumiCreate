@@ -486,8 +486,9 @@
                     placeholder="选择工作流（留空使用默认）"
                     clearable
                   >
-                    <el-option label="simple.json (默认)" value="simple.json" />
+                    <el-option label="simple.json (默认SD1.5)" value="simple.json" />
                     <el-option label="Multi-LoRA-SD1.json (女性角色)" value="Multi-LoRA-SD1.json" />
+                    <el-option label="z-image-turbo.json (Z-Image快速生成)" value="z-image-turbo.json" />
                   </el-select>
                   <div class="form-tip">可在 backend/workflows/ 添加更多工作流</div>
                 </el-form-item>
