@@ -341,7 +341,7 @@ def _wrap_text(text: str, max_chars_per_line: int = 20) -> str:
     return "\n".join(lines)
 
 
-def _format_ass_time(seconds: float) -> str:
+def _format_ass_time_seconds(seconds: float) -> str:
     """将秒数格式化为 ASS 时间格式 (H:MM:SS.CC)"""
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
@@ -408,8 +408,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # 确保最短0.5秒
         sentence_duration = max(sentence_duration, 0.5)
         
-        start_time = _format_ass_time(current_time)
-        end_time = _format_ass_time(min(current_time + sentence_duration, duration_seconds))
+        start_time = _format_ass_time_seconds(current_time)
+        end_time = _format_ass_time_seconds(min(current_time + sentence_duration, duration_seconds))
         
         # 处理换行（如果句子太长）
         display_text = sentence
@@ -728,7 +728,7 @@ async def generate_subtitle_file(
 
 
 def _generate_srt(segments: List[dict]) -> str:
-    """生成 SRT 格式字幕"""
+    """生成 SRT 格式字幕（使用旁白文本）"""
     lines = []
     current_time_ms = 0
     
@@ -736,7 +736,8 @@ def _generate_srt(segments: List[dict]) -> str:
         start_time = _format_srt_time(current_time_ms)
         end_time = _format_srt_time(current_time_ms + seg["duration_ms"])
         
-        text = seg.get("on_screen_text") or seg.get("narration_text", "")
+        # 使用旁白文本作为字幕内容
+        text = seg.get("narration_text", "")
         
         lines.append(str(i + 1))
         lines.append(f"{start_time} --> {end_time}")
@@ -777,10 +778,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     current_time_ms = 0
     
     for seg in segments:
-        start_time = _format_ass_time(current_time_ms)
-        end_time = _format_ass_time(current_time_ms + seg["duration_ms"])
+        start_time = _format_ass_time_ms(current_time_ms)
+        end_time = _format_ass_time_ms(current_time_ms + seg["duration_ms"])
         
-        text = seg.get("on_screen_text") or seg.get("narration_text", "")
+        # 使用旁白文本作为字幕内容
+        text = seg.get("narration_text", "")
         text = text.replace("\n", "\\N")
         
         events.append(f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}")
@@ -790,8 +792,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + "\n".join(events)
 
 
-def _format_ass_time(ms: int) -> str:
-    """格式化 ASS 时间"""
+def _format_ass_time_ms(ms: float) -> str:
+    """格式化 ASS 时间（输入为毫秒）"""
+    ms = int(ms)  # 确保是整数
     hours = ms // 3600000
     minutes = (ms % 3600000) // 60000
     seconds = (ms % 60000) // 1000
