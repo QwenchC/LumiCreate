@@ -300,12 +300,17 @@ async def execute_image_generation(
                 else:
                     # 使用 ComfyUI 生成
                     from app.services.comfyui_client import generate_image_comfyui
+                    from app.services.pollinations_client import translate_prompt_to_english
+                    
+                    # 翻译提示词为英文
+                    translated_prompt = await translate_prompt_to_english(params["prompt"])
+                    logger.info(f"ComfyUI 翻译提示词: {params['prompt'][:50]}... -> {translated_prompt[:50]}...")
                     
                     image_filename = f"{uuid.uuid4()}.png"
                     image_path = output_dir / image_filename
                     
                     gen_result = await generate_image_comfyui(
-                        prompt=params["prompt"],
+                        prompt=translated_prompt,
                         output_path=image_path,
                         negative_prompt=params.get("negative_prompt"),
                         seed=seed,
@@ -330,7 +335,8 @@ async def execute_image_generation(
                         asset_metadata={
                             "engine": "comfyui",
                             "seed": gen_result.get("seed", seed),
-                            "prompt": gen_result.get("prompt", params["prompt"]),
+                            "prompt": translated_prompt,  # 保存翻译后的提示词
+                            "original_prompt": params["prompt"],  # 同时保存原始中文提示词
                             "width": gen_result.get("width"),
                             "height": gen_result.get("height"),
                             "prompt_id": gen_result.get("prompt_id"),

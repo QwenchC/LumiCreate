@@ -43,6 +43,7 @@ export interface Asset {
     engine?: string
     seed?: number
     prompt?: string
+    original_prompt?: string  // 原始中文提示词
     model?: string
     width?: number
     height?: number

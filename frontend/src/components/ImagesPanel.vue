@@ -121,8 +121,18 @@
           />
         </div>
         <div class="preview-info" v-if="previewAsset">
+          <!-- 原始中文提示词（如有） -->
+          <div class="info-section" v-if="previewAsset.asset_metadata?.original_prompt">
+            <div class="info-label">原始提示词 (中文)</div>
+            <div class="info-content prompt-text">
+              {{ previewAsset.asset_metadata.original_prompt }}
+            </div>
+          </div>
+          <!-- 翻译后的英文提示词 / 实际使用的提示词 -->
           <div class="info-section">
-            <div class="info-label">提示词 (Prompt)</div>
+            <div class="info-label">
+              {{ previewAsset.asset_metadata?.original_prompt ? '翻译后提示词 (English)' : '提示词 (Prompt)' }}
+            </div>
             <div class="info-content prompt-text">
               {{ previewAsset.asset_metadata?.prompt || '无提示词信息' }}
             </div>
