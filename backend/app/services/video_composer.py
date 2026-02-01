@@ -279,6 +279,9 @@ def _resolve_asset_path(relative_path: str) -> Path:
         return Path(settings.STORAGE_PATH) / relative_path
 
 
+import re
+
+
 def _escape_ffmpeg_text(text: str) -> str:
     """转义 FFmpeg drawtext 滤镜中的特殊字符"""
     if not text:
@@ -289,6 +292,29 @@ def _escape_ffmpeg_text(text: str) -> str:
     text = text.replace(":", "\\:")    # 冒号
     text = text.replace("\n", "\\n")   # 换行符
     return text
+
+
+def _split_sentences(text: str) -> List[str]:
+    """
+    将文本按句子切分
+    支持中文和英文标点符号
+    """
+    if not text:
+        return []
+    
+    # 按中英文句子结束符切分，保留标点
+    # 匹配：句号、问号、感叹号（中英文）、省略号
+    pattern = r'([^。！？!?.…]+[。！？!?.…]+)'
+    sentences = re.findall(pattern, text)
+    
+    # 如果没有匹配到任何句子（可能没有标点），返回整段
+    if not sentences:
+        return [text.strip()] if text.strip() else []
+    
+    # 清理空白
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    return sentences
 
 
 def _wrap_text(text: str, max_chars_per_line: int = 20) -> str:
@@ -313,6 +339,97 @@ def _wrap_text(text: str, max_chars_per_line: int = 20) -> str:
         lines.append(current_line)
     
     return "\n".join(lines)
+
+
+def _format_ass_time(seconds: float) -> str:
+    """将秒数格式化为 ASS 时间格式 (H:MM:SS.CC)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    centiseconds = int((secs - int(secs)) * 100)
+    return f"{hours}:{minutes:02d}:{int(secs):02d}.{centiseconds:02d}"
+
+
+def _generate_ass_subtitle(
+    sentences: List[str],
+    duration_seconds: float,
+    width: int,
+    height: int,
+    font_size: int = 40,
+    font_color: str = "FFFFFF",
+    margin_bottom: int = 80,
+    max_chars_per_line: int = 18
+) -> str:
+    """
+    生成 ASS 格式字幕文件内容
+    
+    Args:
+        sentences: 句子列表
+        duration_seconds: 总时长（秒）
+        width: 视频宽度
+        height: 视频高度
+        font_size: 字体大小
+        font_color: 字体颜色（BGR格式，如 FFFFFF）
+        margin_bottom: 底部边距
+        max_chars_per_line: 每行最大字符数
+    
+    Returns:
+        ASS 字幕文件内容
+    """
+    if not sentences:
+        return ""
+    
+    # 计算每个句子的时长（按字数比例分配）
+    total_chars = sum(len(s) for s in sentences)
+    if total_chars == 0:
+        return ""
+    
+    # ASS 文件头
+    ass_content = f"""[Script Info]
+Title: Auto Generated Subtitle
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Microsoft YaHei,{font_size},&H00{font_color},&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,{margin_bottom},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    
+    # 为每个句子分配时间并生成字幕条目
+    current_time = 0.0
+    for sentence in sentences:
+        # 按字数比例分配时长
+        sentence_duration = (len(sentence) / total_chars) * duration_seconds
+        # 确保最短0.5秒
+        sentence_duration = max(sentence_duration, 0.5)
+        
+        start_time = _format_ass_time(current_time)
+        end_time = _format_ass_time(min(current_time + sentence_duration, duration_seconds))
+        
+        # 处理换行（如果句子太长）
+        display_text = sentence
+        if len(sentence) > max_chars_per_line:
+            # 在中间位置换行
+            lines = []
+            current_line = ""
+            for char in sentence:
+                current_line += char
+                if len(current_line) >= max_chars_per_line:
+                    lines.append(current_line)
+                    current_line = ""
+            if current_line:
+                lines.append(current_line)
+            display_text = "\\N".join(lines)  # ASS 换行符
+        
+        ass_content += f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{display_text}\n"
+        current_time += sentence_duration
+    
+    return ass_content
 
 
 async def _create_segment_video(
@@ -418,27 +535,32 @@ async def _create_segment_video(
                 f"box=1:boxcolor={on_screen_bg_color}:boxborderw=10"
             )
         
-        # 添加旁白字幕（底部）- 支持自动换行，使用 textfile 避免转义问题
+        # 添加旁白字幕（底部）- 使用 ASS 字幕实现逐句显示
         if narration_text and narration_text.strip():
-            # 先换行
-            wrapped_narration = _wrap_text(narration_text.strip(), max_chars_per_line)
-            # 写入临时文件（FFmpeg textfile 参数可正确处理换行）
-            narration_file = temp_dir / f"narration_{index:04d}.txt"
-            with open(narration_file, "w", encoding="utf-8") as f:
-                f.write(wrapped_narration)
-            # 使用 textfile 参数，路径需要转义冒号
-            narration_file_path = str(narration_file.resolve()).replace("\\", "/").replace(":", "\\:")
-            # 底部居中，带背景框
-            vf_parts.append(
-                f"drawtext=textfile='{narration_file_path}':"
-                f"fontfile='{font_file}':"
-                f"fontsize={narration_font_size}:"
-                f"fontcolor={narration_font_color}:"
-                f"x=(w-text_w)/2:"
-                f"y=h-text_h-{narration_margin}:"
-                f"box=1:boxcolor={narration_bg_color}:boxborderw=8:"
-                f"line_spacing=8"
-            )
+            # 将旁白按句子切分
+            sentences = _split_sentences(narration_text.strip())
+            
+            if sentences:
+                # 生成 ASS 字幕文件
+                ass_content = _generate_ass_subtitle(
+                    sentences=sentences,
+                    duration_seconds=duration_seconds,
+                    width=width,
+                    height=height,
+                    font_size=narration_font_size,
+                    font_color="FFFFFF",  # 白色
+                    margin_bottom=narration_margin,
+                    max_chars_per_line=max_chars_per_line
+                )
+                
+                # 写入 ASS 文件
+                ass_file = temp_dir / f"subtitle_{index:04d}.ass"
+                with open(ass_file, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
+                
+                # 使用 ass 滤镜，路径需要转义冒号和反斜杠
+                ass_file_path = str(ass_file.resolve()).replace("\\", "/").replace(":", "\\:")
+                vf_parts.append(f"ass='{ass_file_path}'")
     
     # 合并所有滤镜
     vf = ",".join(vf_parts)
