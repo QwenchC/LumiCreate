@@ -291,6 +291,30 @@ def _escape_ffmpeg_text(text: str) -> str:
     return text
 
 
+def _wrap_text(text: str, max_chars_per_line: int = 20) -> str:
+    """
+    将长文本按指定字符数换行
+    中文字符和英文字符都按1个字符计算
+    """
+    if not text:
+        return ""
+    
+    lines = []
+    current_line = ""
+    
+    for char in text:
+        current_line += char
+        # 简单按字符数换行
+        if len(current_line) >= max_chars_per_line:
+            lines.append(current_line)
+            current_line = ""
+    
+    if current_line:
+        lines.append(current_line)
+    
+    return "\n".join(lines)
+
+
 async def _create_segment_video(
     segment: dict,
     config: dict,
@@ -350,9 +374,14 @@ async def _create_segment_video(
     
     # 字幕配置
     subtitle_config = config.get("subtitle", {})
+    # burn_subtitle: 是否将字幕烧录到视频中
+    burn_subtitle = config.get("burn_subtitle", True)
     subtitle_enabled = subtitle_config.get("enabled", True) if subtitle_config else config.get("subtitle_enabled", True)
     
-    if subtitle_enabled:
+    # 根据视频宽度计算每行最大字符数（竖屏约20字，横屏约30字）
+    max_chars_per_line = 18 if is_portrait else 28
+    
+    if subtitle_enabled and burn_subtitle:
         # 字体设置（使用系统中文字体）
         font_file = subtitle_config.get("font_file", "C\\\\:/Windows/Fonts/msyh.ttc") if subtitle_config else "C\\\\:/Windows/Fonts/msyh.ttc"
         
@@ -384,9 +413,11 @@ async def _create_segment_video(
                 f"box=1:boxcolor={on_screen_bg_color}:boxborderw=10"
             )
         
-        # 添加旁白字幕（底部）
+        # 添加旁白字幕（底部）- 支持自动换行
         if narration_text and narration_text.strip():
-            escaped_narration = _escape_ffmpeg_text(narration_text.strip())
+            # 先换行再转义
+            wrapped_narration = _wrap_text(narration_text.strip(), max_chars_per_line)
+            escaped_narration = _escape_ffmpeg_text(wrapped_narration)
             # 底部居中，带背景框
             vf_parts.append(
                 f"drawtext=text='{escaped_narration}':"
@@ -395,7 +426,8 @@ async def _create_segment_video(
                 f"fontcolor={narration_font_color}:"
                 f"x=(w-text_w)/2:"
                 f"y=h-text_h-{narration_margin}:"
-                f"box=1:boxcolor={narration_bg_color}:boxborderw=8"
+                f"box=1:boxcolor={narration_bg_color}:boxborderw=8:"
+                f"line_spacing=8"
             )
     
     # 合并所有滤镜

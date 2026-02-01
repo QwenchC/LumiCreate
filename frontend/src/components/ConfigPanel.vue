@@ -690,6 +690,12 @@
                 </el-form-item>
               </el-col>
               <el-col :span="6" v-if="localConfig.video_composer.subtitle_enabled">
+                <el-form-item label="嵌入字幕到视频">
+                  <el-switch v-model="localConfig.video_composer.burn_subtitle" />
+                  <span class="form-tip">将字幕烧录到画面中</span>
+                </el-form-item>
+              </el-col>
+              <el-col :span="6" v-if="localConfig.video_composer.subtitle_enabled">
                 <el-form-item label="字幕格式">
                   <el-select v-model="localConfig.video_composer.subtitle_format" placeholder="选择格式">
                     <el-option label="SRT" value="srt" />
@@ -936,6 +942,7 @@ const defaultConfig = {
     bgm_volume: 0.3,
     bgm_ducking: true,
     subtitle_enabled: true,
+    burn_subtitle: true,
     subtitle_format: 'srt',
     subtitle_font: 'Microsoft YaHei',
     subtitle_font_size: 48,
