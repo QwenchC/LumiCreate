@@ -59,8 +59,16 @@ async def download_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="资产不存在")
     
-    # 构建完整路径：STORAGE_PATH + 相对路径
-    file_path = Path(settings.STORAGE_PATH) / asset.file_path
+    # 构建完整路径
+    # 检查 file_path 是否已经包含 storage 前缀
+    asset_file_path = Path(asset.file_path)
+    if str(asset_file_path).startswith("storage"):
+        # file_path 已经包含 storage 前缀，直接使用相对于项目根目录的路径
+        file_path = Path(".") / asset.file_path
+    else:
+        # file_path 是相对于 STORAGE_PATH 的路径
+        file_path = Path(settings.STORAGE_PATH) / asset.file_path
+    
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
     
