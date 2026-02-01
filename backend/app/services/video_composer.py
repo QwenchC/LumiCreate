@@ -279,6 +279,18 @@ def _resolve_asset_path(relative_path: str) -> Path:
         return Path(settings.STORAGE_PATH) / relative_path
 
 
+def _escape_ffmpeg_text(text: str) -> str:
+    """转义 FFmpeg drawtext 滤镜中的特殊字符"""
+    if not text:
+        return ""
+    # FFmpeg drawtext 需要转义的字符：' : \ 和换行符
+    text = text.replace("\\", "\\\\")  # 反斜杠
+    text = text.replace("'", "'\\''")  # 单引号
+    text = text.replace(":", "\\:")    # 冒号
+    text = text.replace("\n", "\\n")   # 换行符
+    return text
+
+
 async def _create_segment_video(
     segment: dict,
     config: dict,
@@ -290,6 +302,8 @@ async def _create_segment_video(
     audio_path = segment.get("audio_path")
     duration_ms = segment.get("duration_ms", 3000)
     duration_seconds = duration_ms / 1000
+    narration_text = segment.get("narration_text", "")
+    on_screen_text = segment.get("on_screen_text", "")
     
     # 构建完整路径（处理 storage 前缀）
     if image_path:
@@ -332,7 +346,60 @@ async def _create_segment_video(
             width, height = 1280, 720
     
     # 视频滤镜：缩放并填充（保持比例，黑边填充）
-    vf = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+    vf_parts = [f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"]
+    
+    # 字幕配置
+    subtitle_config = config.get("subtitle", {})
+    subtitle_enabled = subtitle_config.get("enabled", True) if subtitle_config else config.get("subtitle_enabled", True)
+    
+    if subtitle_enabled:
+        # 字体设置（使用系统中文字体）
+        font_file = subtitle_config.get("font_file", "C\\\\:/Windows/Fonts/msyh.ttc") if subtitle_config else "C\\\\:/Windows/Fonts/msyh.ttc"
+        
+        # 屏幕文字配置（顶部）
+        on_screen_config = subtitle_config.get("on_screen", {}) if subtitle_config else {}
+        on_screen_font_size = on_screen_config.get("font_size", 48)
+        on_screen_font_color = on_screen_config.get("font_color", "white")
+        on_screen_bg_color = on_screen_config.get("bg_color", "black@0.6")
+        on_screen_margin = on_screen_config.get("margin", 60)
+        
+        # 旁白字幕配置（底部）
+        narration_config = subtitle_config.get("narration", {}) if subtitle_config else {}
+        narration_font_size = narration_config.get("font_size", 40)
+        narration_font_color = narration_config.get("font_color", "white")
+        narration_bg_color = narration_config.get("bg_color", "black@0.5")
+        narration_margin = narration_config.get("margin", 80)
+        
+        # 添加屏幕文字（顶部）
+        if on_screen_text and on_screen_text.strip():
+            escaped_on_screen = _escape_ffmpeg_text(on_screen_text.strip())
+            # 顶部居中，带背景框
+            vf_parts.append(
+                f"drawtext=text='{escaped_on_screen}':"
+                f"fontfile='{font_file}':"
+                f"fontsize={on_screen_font_size}:"
+                f"fontcolor={on_screen_font_color}:"
+                f"x=(w-text_w)/2:"
+                f"y={on_screen_margin}:"
+                f"box=1:boxcolor={on_screen_bg_color}:boxborderw=10"
+            )
+        
+        # 添加旁白字幕（底部）
+        if narration_text and narration_text.strip():
+            escaped_narration = _escape_ffmpeg_text(narration_text.strip())
+            # 底部居中，带背景框
+            vf_parts.append(
+                f"drawtext=text='{escaped_narration}':"
+                f"fontfile='{font_file}':"
+                f"fontsize={narration_font_size}:"
+                f"fontcolor={narration_font_color}:"
+                f"x=(w-text_w)/2:"
+                f"y=h-text_h-{narration_margin}:"
+                f"box=1:boxcolor={narration_bg_color}:boxborderw=8"
+            )
+    
+    # 合并所有滤镜
+    vf = ",".join(vf_parts)
     
     cmd.extend([
         "-vf", vf,
