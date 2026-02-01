@@ -238,6 +238,11 @@ class ComfyUIClient:
                             timeout=10.0
                         )
                         
+                        # 跳过二进制消息（如预览图片）
+                        if isinstance(message, bytes):
+                            logger.debug("收到二进制消息（预览图片），跳过")
+                            continue
+                        
                         data = json.loads(message)
                         msg_type = data.get("type")
                         

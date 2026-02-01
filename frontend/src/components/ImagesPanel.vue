@@ -74,6 +74,14 @@
               <el-icon v-if="segment.selected_image_asset_id === asset.id"><Check /></el-icon>
             </div>
             <div class="image-version">v{{ asset.version }}</div>
+            <!-- 放大预览按钮 -->
+            <div 
+              class="zoom-btn" 
+              @click.stop="handlePreviewImage(asset)"
+              title="查看大图"
+            >
+              <el-icon><ZoomIn /></el-icon>
+            </div>
           </div>
           
           <!-- 空状态 -->
@@ -93,12 +101,32 @@
       <!-- 空状态 -->
       <el-empty v-if="!segments.length" description="请先生成文案并切分段落" />
     </div>
+
+    <!-- 图片预览对话框 -->
+    <el-dialog
+      v-model="previewVisible"
+      :title="previewTitle"
+      width="90%"
+      class="image-preview-dialog"
+      :show-close="true"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <div class="preview-container">
+        <img 
+          :src="previewUrl" 
+          :alt="previewTitle"
+          class="preview-image"
+        />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { ZoomIn } from '@element-plus/icons-vue'
 import { useSegmentStore, type Segment, type Asset } from '@/stores'
 import { jobApi } from '@/api'
 
@@ -112,6 +140,11 @@ const loading = ref(false)
 const batchGenerating = ref(false)
 const generatingIds = ref<number[]>([])
 const selectedIds = ref<number[]>([])
+
+// 图片预览相关
+const previewVisible = ref(false)
+const previewUrl = ref('')
+const previewTitle = ref('')
 
 const segments = computed(() => segmentStore.segments)
 const segmentAssets = computed(() => segmentStore.segmentAssets)
@@ -173,6 +206,12 @@ const toggleSelect = (id: number, val: boolean) => {
 const handleSelectImage = async (segmentId: number, assetId: number) => {
   await segmentStore.selectImage(segmentId, assetId)
   ElMessage.success('已选择图片')
+}
+
+const handlePreviewImage = (asset: Asset) => {
+  previewUrl.value = getImageUrl(asset)
+  previewTitle.value = asset.file_name || '图片预览'
+  previewVisible.value = true
 }
 
 const handleGenerateSingle = async (segmentId: number) => {
@@ -327,8 +366,38 @@ const handleGenerateAll = async () => {
     border-radius: 4px;
   }
   
+  .zoom-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: all 0.3s;
+    cursor: pointer;
+    
+    .el-icon {
+      font-size: 18px;
+      color: #fff;
+    }
+    
+    &:hover {
+      background: var(--el-color-primary);
+      transform: scale(1.1);
+    }
+  }
+  
   &:hover {
     .image-overlay {
+      opacity: 1;
+    }
+    
+    .zoom-btn {
       opacity: 1;
     }
   }
@@ -347,5 +416,28 @@ const handleGenerateAll = async () => {
   grid-column: 1 / -1;
   padding: 20px;
   text-align: center;
+}
+
+// 图片预览对话框样式
+.image-preview-dialog {
+  .el-dialog__body {
+    padding: 0;
+    max-height: 85vh;
+    overflow: auto;
+  }
+  
+  .preview-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a1a1a;
+    min-height: 400px;
+    
+    .preview-image {
+      max-width: 100%;
+      max-height: 85vh;
+      object-fit: contain;
+    }
+  }
 }
 </style>
