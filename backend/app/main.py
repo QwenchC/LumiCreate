@@ -5,6 +5,7 @@ LumiCreate - 智能说书人视频自动化生产线
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from app.api import projects, scripts, segments, assets, jobs, config
@@ -56,6 +57,16 @@ app.include_router(assets.router, prefix="/api/assets", tags=["资产管理"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["任务管理"])
 app.include_router(config.router, prefix="/api/config", tags=["配置管理"])
 app.include_router(settings_api.router, prefix="/api", tags=["系统设置"])
+
+# 静态文件服务 - 提供图片、音频、视频访问
+# 确保目录存在
+settings.STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+settings.IMAGES_PATH.mkdir(parents=True, exist_ok=True)
+settings.AUDIO_PATH.mkdir(parents=True, exist_ok=True)
+settings.VIDEO_PATH.mkdir(parents=True, exist_ok=True)
+
+# 挂载静态文件目录
+app.mount("/storage", StaticFiles(directory=str(settings.STORAGE_PATH)), name="storage")
 
 
 @app.get("/", tags=["健康检查"])

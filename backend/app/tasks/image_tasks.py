@@ -80,7 +80,7 @@ async def _generate_image_async(task, job_id: int):
                         width=params.get("width", 1024),
                         height=params.get("height", 1024),
                         seed=seed,
-                        model=params.get("pollinations_model", "flux"),
+                        model=params.get("pollinations_model", "zimage"),
                         translate=True  # 自动翻译中文
                     )
                     

@@ -151,8 +151,9 @@ export const useSegmentStore = defineStore('segment', () => {
     segmentAssets.value.set(segmentId, res.items)
   }
   
-  const generateImages = async (segmentId: number, count = 3) => {
-    return await segmentApi.generateImages(segmentId, { count })
+  const generateImages = async (segmentId: number, count?: number) => {
+    // 如果不传 count，后端会自动使用项目配置的 candidates_per_segment
+    return await segmentApi.generateImages(segmentId, count ? { count } : undefined)
   }
   
   const selectImage = async (segmentId: number, assetId: number) => {

@@ -73,7 +73,7 @@ class SegmentReorderRequest(BaseModel):
 
 class ImageGenerateRequest(BaseModel):
     """图片生成请求"""
-    count: int = Field(1, ge=1, le=10, description="生成数量")
+    count: Optional[int] = Field(None, ge=1, le=10, description="生成数量（不填则使用项目配置）")
     override_prompt: Optional[str] = Field(None, description="覆盖的提示词")
     override_seed: Optional[int] = Field(None, description="覆盖的种子")
 

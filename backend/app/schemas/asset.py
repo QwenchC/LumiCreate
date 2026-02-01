@@ -2,7 +2,7 @@
 资产相关的 Pydantic Schema
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 
 from app.models.asset import AssetType
@@ -22,7 +22,7 @@ class AssetResponse(AssetBase):
     file_path: str
     file_name: str
     file_size: Optional[int]
-    metadata: Optional[dict]
+    asset_metadata: Optional[dict] = None  # 与模型字段名保持一致
     duration_ms: Optional[int]
     version: int
     created_at: datetime

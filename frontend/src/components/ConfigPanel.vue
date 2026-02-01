@@ -348,6 +348,7 @@
               <el-col :span="12" v-if="localConfig.image_generation.engine === 'pollinations'">
                 <el-form-item label="Pollinations 模型">
                   <el-select v-model="localConfig.image_generation.pollinations_model" placeholder="选择模型">
+                    <el-option label="ZImage (推荐)" value="zimage" />
                     <el-option label="Flux (默认)" value="flux" />
                     <el-option label="Turbo (快速)" value="turbo" />
                     <el-option label="Flux Realism (写实)" value="flux-realism" />
@@ -854,7 +855,7 @@ const defaultConfig = {
   },
   image_generation: {
     engine: 'pollinations',  // 'pollinations' 或 'comfyui'
-    pollinations_model: 'flux',
+    pollinations_model: 'zimage',
     style: '国风',
     resolution: '1024',
     aspect_ratio: '竖屏9:16',

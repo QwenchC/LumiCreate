@@ -3,7 +3,7 @@ import { ElMessage } from 'element-plus'
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 60000,
+  timeout: 180000,  // 3分钟，足够生成多张图片
 })
 
 // 请求拦截器

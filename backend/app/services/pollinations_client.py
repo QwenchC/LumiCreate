@@ -2,7 +2,10 @@
 Pollinations.ai 图片生成客户端
 https://pollinations.ai/
 
+API 格式: https://gen.pollinations.ai/image/{prompt}?model={model}&width=X&height=Y&seed=N
+
 支持的模型:
+- zimage: 推荐模型，快速高质量
 - flux: 默认模型，质量和速度平衡
 - turbo: 快速生成
 - flux-realism: 写实风格
@@ -53,26 +56,22 @@ async def translate_prompt_to_english(prompt: str) -> str:
 
 def build_pollinations_url(
     prompt: str,
-    model: str = "flux",
+    model: str = "zimage",
     width: int = 1024,
     height: int = 1024,
-    seed: int = -1,
-    nologo: bool = True,
-    enhance: bool = False,
-    safe: bool = True
+    seed: int = 0
 ) -> str:
     """
     构建 Pollinations 图片生成 URL
     
+    API 格式: https://gen.pollinations.ai/image/{prompt}?model={model}&width=X&height=Y&seed=N
+    
     Args:
         prompt: 图片描述（必须是英文）
-        model: 模型名称
+        model: 模型名称 (zimage, flux, turbo...)
         width: 图片宽度
         height: 图片高度
-        seed: 随机种子（-1 表示随机）
-        nologo: 是否去除水印
-        enhance: 是否增强提示词
-        safe: 安全模式
+        seed: 随机种子
     
     Returns:
         完整的 API URL
@@ -84,14 +83,15 @@ def build_pollinations_url(
         f"model={model}",
         f"width={width}",
         f"height={height}",
-        f"seed={seed}",
-        f"nologo={'true' if nologo else 'false'}",
-        f"enhance={'true' if enhance else 'false'}",
-        f"safe={'true' if safe else 'false'}"
+        f"seed={seed}"
     ]
     
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?{'&'.join(params)}"
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}?{'&'.join(params)}"
     return url
+
+
+# 模型回退列表（按优先级排序）
+FALLBACK_MODELS = ["flux", "turbo", "flux-realism"]
 
 
 async def generate_image_pollinations(
@@ -102,7 +102,8 @@ async def generate_image_pollinations(
     seed: Optional[int] = None,
     model: Optional[str] = None,
     style_prefix: str = "",
-    translate: bool = True
+    translate: bool = True,
+    retry_with_fallback: bool = True
 ) -> Dict[str, Any]:
     """
     使用 Pollinations.ai 生成图片
@@ -116,6 +117,7 @@ async def generate_image_pollinations(
         model: 模型名称（可选，默认从配置读取）
         style_prefix: 风格前缀
         translate: 是否翻译中文为英文
+        retry_with_fallback: 是否在模型不可用时自动尝试备用模型
     
     Returns:
         生成结果字典
@@ -132,31 +134,90 @@ async def generate_image_pollinations(
     if translate:
         full_prompt = await translate_prompt_to_english(full_prompt)
     
-    # 生成种子
+    # 生成种子 (确保在合理范围内 0-999999999)
     if seed is None or seed < 0:
-        seed = uuid.uuid4().int % (2**31)
+        seed = uuid.uuid4().int % 1000000000
     
-    # 构建 URL
-    url = build_pollinations_url(
-        prompt=full_prompt,
-        model=use_model,
-        width=width,
-        height=height,
-        seed=seed,
-        nologo=True,
-        enhance=False,
-        safe=True
-    )
+    # 尝试的模型列表
+    models_to_try = [use_model]
+    if retry_with_fallback:
+        # 添加备用模型（排除已在列表中的）
+        for fallback in FALLBACK_MODELS:
+            if fallback not in models_to_try:
+                models_to_try.append(fallback)
     
-    logger.info(f"Pollinations 生成图片: {url[:200]}...")
+    last_error = None
     
-    # 构建请求头
-    headers = {
-        "Accept": "image/*"
-    }
-    if config.api_key:
-        headers["Authorization"] = f"Bearer {config.api_key}"
+    for try_model in models_to_try:
+        # 构建 URL
+        url = build_pollinations_url(
+            prompt=full_prompt,
+            model=try_model,
+            width=width,
+            height=height,
+            seed=seed
+        )
+        
+        if try_model != use_model:
+            logger.info(f"尝试备用模型 {try_model}...")
+        logger.info(f"Pollinations 生成图片: {url[:200]}...")
+        
+        # 构建请求头
+        headers = {
+            "Accept": "image/*"
+        }
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
+        
+        try:
+            result = await _do_pollinations_request(
+                url=url,
+                headers=headers,
+                output_path=output_path,
+                full_prompt=full_prompt,
+                seed=seed,
+                model=try_model,
+                width=width,
+                height=height
+            )
+            
+            if result.get("success"):
+                return result
+            
+            # 检查是否是服务器不可用错误（可以尝试其他模型）
+            error_msg = result.get("error", "")
+            if "No active" in error_msg and "servers available" in error_msg:
+                logger.warning(f"模型 {try_model} 服务器不可用，尝试备用模型...")
+                last_error = error_msg
+                continue
+            elif "500" in error_msg or "503" in error_msg:
+                logger.warning(f"模型 {try_model} 服务器错误，尝试备用模型...")
+                last_error = error_msg
+                continue
+            else:
+                # 其他错误直接返回
+                return result
+                
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"模型 {try_model} 请求失败: {e}")
+            continue
     
+    # 所有模型都失败
+    return {"success": False, "error": f"所有模型都不可用: {last_error}"}
+
+
+async def _do_pollinations_request(
+    url: str,
+    headers: dict,
+    output_path: Path,
+    full_prompt: str,
+    seed: int,
+    model: str,
+    width: int,
+    height: int
+) -> Dict[str, Any]:
+    """执行实际的 Pollinations API 请求"""
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.get(url, headers=headers, follow_redirects=True)
@@ -178,7 +239,7 @@ async def generate_image_pollinations(
                         "path": str(output_path),
                         "prompt": full_prompt,
                         "seed": seed,
-                        "model": use_model,
+                        "model": model,
                         "width": width,
                         "height": height
                     }
@@ -187,8 +248,11 @@ async def generate_image_pollinations(
                     logger.error(error_msg)
                     return {"success": False, "error": error_msg}
             else:
-                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                # 记录完整错误信息以便调试
+                error_msg = f"HTTP {response.status_code}: {response.text[:500]}"
                 logger.error(f"Pollinations 请求失败: {error_msg}")
+                # 记录请求参数以便调试
+                logger.error(f"请求参数: model={model}, width={width}, height={height}, seed={seed}")
                 return {"success": False, "error": error_msg}
                 
     except httpx.TimeoutException:

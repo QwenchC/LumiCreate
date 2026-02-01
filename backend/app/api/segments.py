@@ -16,7 +16,7 @@ from app.schemas.segment import (
     ImageGenerateRequest, ImageSelectRequest, AudioGenerateRequest
 )
 from app.schemas.asset import AssetListResponse
-from app.services.image_generator import generate_segment_images
+from app.services.image_generator import generate_segment_images, execute_image_generation
 from app.services.audio_generator import generate_segment_audio
 
 router = APIRouter()
@@ -264,7 +264,25 @@ async def generate_images(
         override_seed=request.override_seed
     )
     
-    return {"job_id": job.id, "status": job.status, "message": "图片生成任务已创建"}
+    # 直接执行图片生成（不通过 Celery）
+    # 对于 Pollinations 等云端服务，这样可以立即返回结果
+    gen_result = await execute_image_generation(db, job)
+    
+    if gen_result.get("success"):
+        return {
+            "job_id": job.id,
+            "status": "completed",
+            "message": f"图片生成完成，共 {len(gen_result.get('asset_ids', []))} 张",
+            "asset_ids": gen_result.get("asset_ids", []),
+            "assets": gen_result.get("assets", [])
+        }
+    else:
+        return {
+            "job_id": job.id,
+            "status": "failed",
+            "message": gen_result.get("error", "生成失败"),
+            "error": gen_result.get("error")
+        }
 
 
 @router.post("/{segment_id}/images/{asset_id}/select", response_model=SegmentResponse)

@@ -1,21 +1,25 @@
 {
-  "deepseek": {
-    "api_key": "sk-8dfd014a5360431eb218c366cb2777cd",
-    "api_base": "https://api.deepseek.com/v1",
-    "model": "deepseek-chat"
-  },
-  "comfyui": {
-    "api_url": "http://localhost:8188",
-    "default_workflow": ""
-  },
-  "tts": {
-    "engine": "edge-tts",
-    "sovits_url": "http://localhost:9880"
-  },
-  "ffmpeg": {
-    "path": "ffmpeg"
-  },
-  "storage": {
-    "path": "./storage"
-  }
+    "deepseek":  {
+                     "api_key":  "sk-8dfd014a5360431eb218c366cb2777cd",
+                     "api_base":  "https://api.deepseek.com/v1",
+                     "model":  "deepseek-chat"
+                 },
+    "comfyui":  {
+                    "api_url":  "http://localhost:8188",
+                    "default_workflow":  ""
+                },
+    "pollinations":  {
+                         "api_key":  "sk_9Cu03BPb1G7AtlSayGmyPkZ0gsnPkp8w",
+                         "model":  "zimage"
+                     },
+    "tts":  {
+                "engine":  "edge-tts",
+                "sovits_url":  "http://localhost:9880"
+            },
+    "ffmpeg":  {
+                   "path":  "ffmpeg"
+               },
+    "storage":  {
+                    "path":  "./storage"
+                }
 }

@@ -126,7 +126,7 @@ const getStatusLabel = (status?: string) => {
 
 const handleConfigUpdate = async (config: any) => {
   await projectStore.updateConfig(config)
-  ElMessage.success('配置已保存')
+  // 提示消息已在 ConfigPanel 中显示，这里不再重复
 }
 
 const handleSegmentsUpdated = () => {

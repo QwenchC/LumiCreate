@@ -327,9 +327,14 @@ class ProjectConfig(BaseModel):
         default_factory=SegmenterConfig,
         description="切分配置"
     )
-    comfyui: ComfyUIConfig = Field(
+    image_generation: ComfyUIConfig = Field(
         default_factory=ComfyUIConfig,
-        description="ComfyUI出图配置"
+        description="出图配置（支持 Pollinations.ai 和 ComfyUI）"
+    )
+    # 保留 comfyui 字段别名以兼容旧数据
+    comfyui: Optional[ComfyUIConfig] = Field(
+        default=None,
+        description="（已废弃，请使用 image_generation）ComfyUI出图配置"
     )
     tts: TTSConfig = Field(
         default_factory=TTSConfig,

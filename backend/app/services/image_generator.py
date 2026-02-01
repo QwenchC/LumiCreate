@@ -5,6 +5,7 @@
 import json
 import uuid
 import httpx
+import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,8 @@ from app.models.segment import Segment, SegmentStatus
 from app.models.asset import Asset, AssetType
 from app.models.job import Job, JobType, JobStatus
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # 画风映射 - 通用英文前缀
@@ -73,11 +76,17 @@ def build_full_prompt(
 def calculate_dimensions(resolution: str, aspect_ratio: str) -> tuple:
     """
     根据分辨率和画面比例计算实际尺寸
+    确保尺寸是 64 的倍数（大多数图像生成 API 的要求）
     
     Returns:
         (width, height)
     """
     base = int(resolution) if resolution else 1024
+    
+    # 确保 base 是 64 的倍数
+    base = (base // 64) * 64
+    if base < 512:
+        base = 512
     
     if aspect_ratio == "竖屏9:16":
         # 竖屏：宽度为 base，高度按比例
@@ -90,13 +99,17 @@ def calculate_dimensions(resolution: str, aspect_ratio: str) -> tuple:
     else:  # 正方形1:1
         width = height = base
     
+    # 确保 width 和 height 都是 64 的倍数
+    width = (width // 64) * 64
+    height = (height // 64) * 64
+    
     return width, height
 
 
 async def generate_segment_images(
     db: AsyncSession,
     segment: Segment,
-    count: int = 1,
+    count: Optional[int] = None,
     override_prompt: Optional[str] = None,
     override_seed: Optional[int] = None
 ) -> Job:
@@ -106,7 +119,7 @@ async def generate_segment_images(
     Args:
         db: 数据库会话
         segment: 段落对象
-        count: 生成数量
+        count: 生成数量（如果为 None，从项目配置读取）
         override_prompt: 覆盖的提示词
         override_seed: 覆盖的种子
     
@@ -124,6 +137,10 @@ async def generate_segment_images(
     # 向后兼容：如果没有 image_generation，尝试使用 comfyui
     if not image_config:
         image_config = project.project_config.get("comfyui", {})
+    
+    # 如果没有指定 count，从项目配置读取
+    if count is None:
+        count = image_config.get("candidates_per_segment", 3)
     
     # 获取生图引擎：pollinations 或 comfyui
     engine = image_config.get("engine", "pollinations")
@@ -161,7 +178,7 @@ async def generate_segment_images(
         "sampler": image_config.get("sampler", "euler_ancestral"),
         "workflow_id": image_config.get("workflow_id"),
         # Pollinations 特有参数
-        "pollinations_model": image_config.get("pollinations_model", "flux")
+        "pollinations_model": image_config.get("pollinations_model", "zimage")
     }
     
     # 创建任务
@@ -186,6 +203,179 @@ async def generate_segment_images(
     # await db.commit()
     
     return job
+
+
+async def execute_image_generation(
+    db: AsyncSession,
+    job: Job
+) -> Dict[str, Any]:
+    """
+    直接执行图片生成（不通过 Celery）
+    适用于 Pollinations 等快速云端生图
+    
+    Args:
+        db: 数据库会话
+        job: 任务对象
+    
+    Returns:
+        生成结果
+    """
+    import uuid
+    from datetime import datetime
+    from app.models.asset import Asset, AssetType
+    from app.services.pollinations_client import generate_image_pollinations
+    
+    params = job.params
+    segment_id = params["segment_id"]
+    count = params.get("count", 1)
+    engine = params.get("engine", "pollinations")
+    
+    # 获取段落
+    result = await db.execute(select(Segment).where(Segment.id == segment_id))
+    segment = result.scalar_one_or_none()
+    if not segment:
+        job.status = JobStatus.FAILED
+        job.error_message = "段落不存在"
+        await db.commit()
+        return {"success": False, "error": "段落不存在"}
+    
+    # 更新任务状态
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime.utcnow()
+    await db.commit()
+    
+    # 准备输出目录
+    output_dir = settings.IMAGES_PATH / str(job.project_id) / str(segment_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    generated_assets = []
+    failed_count = 0
+    
+    try:
+        for i in range(count):
+            # 更新进度
+            job.progress = (i / count) * 100
+            await db.commit()
+            
+            # 生成种子 (Pollinations API 限制种子范围为 0-999999999)
+            seed = params.get("seed") or uuid.uuid4().int % 1000000000
+            
+            try:
+                if engine == "pollinations":
+                    # 使用 Pollinations.ai 生成
+                    image_filename = f"{uuid.uuid4()}.png"
+                    image_path = output_dir / image_filename
+                    
+                    gen_result = await generate_image_pollinations(
+                        prompt=params["prompt"],
+                        output_path=image_path,
+                        width=params.get("width", 1024),
+                        height=params.get("height", 1024),
+                        seed=seed,
+                        model=params.get("pollinations_model", "zimage"),
+                        translate=True
+                    )
+                    
+                    if not gen_result.get("success"):
+                        logger.warning(f"第 {i+1} 张图片生成失败: {gen_result.get('error')}")
+                        failed_count += 1
+                        continue
+                    
+                    # 创建资产记录
+                    asset = Asset(
+                        project_id=job.project_id,
+                        segment_id=segment_id,
+                        asset_type=AssetType.IMAGE,
+                        file_path=str(image_path),
+                        file_name=image_filename,
+                        metadata={
+                            "engine": "pollinations",
+                            "seed": gen_result.get("seed", seed),
+                            "prompt": gen_result.get("prompt", params["prompt"]),
+                            "model": gen_result.get("model"),
+                            "width": gen_result.get("width"),
+                            "height": gen_result.get("height")
+                        }
+                    )
+                else:
+                    # ComfyUI - 暂时模拟
+                    image_filename = f"{uuid.uuid4()}.png"
+                    image_path = output_dir / image_filename
+                    
+                    asset = Asset(
+                        project_id=job.project_id,
+                        segment_id=segment_id,
+                        asset_type=AssetType.IMAGE,
+                        file_path=str(image_path),
+                        file_name=image_filename,
+                        metadata={
+                            "engine": "comfyui",
+                            "seed": seed,
+                            "prompt": params["prompt"],
+                            "note": "ComfyUI 待实现实际调用"
+                        }
+                    )
+                
+                db.add(asset)
+                await db.flush()  # 获取 asset.id
+                generated_assets.append(asset)
+                
+            except Exception as img_error:
+                logger.warning(f"第 {i+1} 张图片生成失败: {img_error}")
+                failed_count += 1
+                continue
+        
+        await db.commit()
+        
+        # 更新段落状态（只要有成功生成的图片就算成功）
+        if generated_assets:
+            segment.status = SegmentStatus.IMAGES_READY
+            
+            # 如果是第一次生成，自动选择第一张
+            if not segment.selected_image_asset_id:
+                segment.selected_image_asset_id = generated_assets[0].id
+        
+        # 更新任务状态
+        if failed_count == 0:
+            job.status = JobStatus.SUCCEEDED
+        elif generated_assets:
+            job.status = JobStatus.SUCCEEDED  # 部分成功也算成功
+            job.error_message = f"部分图片生成失败 ({failed_count}/{count})"
+        else:
+            job.status = JobStatus.FAILED
+            job.error_message = "所有图片生成失败"
+            segment.status = SegmentStatus.READY_SCRIPT
+            
+        job.progress = 100
+        job.finished_at = datetime.utcnow()
+        job.result = {
+            "asset_ids": [a.id for a in generated_assets],
+            "failed_count": failed_count
+        }
+        
+        await db.commit()
+        
+        return {
+            "success": len(generated_assets) > 0,
+            "asset_ids": [a.id for a in generated_assets],
+            "failed_count": failed_count,
+            "assets": [
+                {
+                    "id": a.id,
+                    "file_name": a.file_name,
+                    "file_path": a.file_path
+                } for a in generated_assets
+            ]
+        }
+        
+    except Exception as e:
+        job.status = JobStatus.FAILED
+        job.error_message = str(e)
+        job.finished_at = datetime.utcnow()
+        segment.status = SegmentStatus.READY_SCRIPT  # 回退到脑本就绪状态
+        await db.commit()
+        
+        return {"success": False, "error": str(e)}
 
 
 async def generate_all_images(

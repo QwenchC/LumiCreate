@@ -28,7 +28,7 @@ class ComfyUISettings(BaseModel):
 
 class PollinationsSettings(BaseModel):
     api_key: str = ""
-    model: str = "flux"  # 支持的模型: flux, turbo, flux-realism, flux-anime, flux-3d, any-dark, flux-pro
+    model: str = "zimage"  # 推荐模型: zimage, flux, turbo, flux-realism, flux-anime, flux-3d, any-dark, flux-pro
 
 
 class TTSSettings(BaseModel):
@@ -191,7 +191,7 @@ def get_pollinations_config() -> PollinationsSettings:
 
 class PollinationsTestRequest(BaseModel):
     api_key: str
-    model: str = "flux"
+    model: str = "zimage"
 
 
 @router.post("/test/pollinations")
@@ -199,8 +199,10 @@ async def test_pollinations(request: PollinationsTestRequest):
     """测试 Pollinations 连接"""
     try:
         # 生成一个小测试图片
-        url = f"https://image.pollinations.ai/prompt/test?model={request.model}&width=128&height=128&seed=42&nologo=true"
-        headers = {}
+        url = f"https://gen.pollinations.ai/image/test?model={request.model}&width=128&height=128&seed=42"
+        headers = {
+            "Accept": "*/*"
+        }
         if request.api_key:
             headers["Authorization"] = f"Bearer {request.api_key}"
         
