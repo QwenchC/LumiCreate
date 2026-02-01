@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 async def translate_prompt_to_english(prompt: str) -> str:
     """
-    将中文提示词翻译为英文
-    使用 DeepSeek API 进行翻译
+    将中文提示词转换为 Stable Diffusion 风格的英文标签格式
+    使用 DeepSeek API 进行转换
     """
     from app.services.deepseek_client import call_deepseek
     
@@ -41,16 +41,35 @@ async def translate_prompt_to_english(prompt: str) -> str:
     if chinese_chars == 0:
         return prompt
     
+    system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts.
+
+Convert the Chinese text into English tags/phrases in the standard SD prompt format:
+- Use comma-separated English words and short phrases
+- Include quality tags like: masterpiece, best quality, highly detailed, 8k
+- Include style tags based on the scene mood
+- Describe characters with: gender, hair, eyes, clothing, pose, expression
+- Describe environment with: location, lighting, atmosphere
+- Use weight syntax like (important:1.3) for emphasis
+- Use BREAK to separate different sections if needed
+
+Example output format:
+masterpiece, best quality, highly detailed, 
+1boy, black hair, determined expression, traditional chinese clothing,
+standing in ancient forest, misty atmosphere, dramatic lighting,
+detailed background, fantasy scene
+
+Only output the prompt tags, no explanations or translations of the original text."""
+
     try:
         translated = await call_deepseek(
-            system_prompt="You are a translator. Translate the following Chinese text to English. Only output the translation, no explanations. Keep it concise and suitable for AI image generation prompts.",
-            user_prompt=prompt,
-            temperature=0.3,
-            max_tokens=500
+            system_prompt=system_prompt,
+            user_prompt=f"将以下中文场景描述转换为 Stable Diffusion 提示词格式：\n\n{prompt}",
+            temperature=0.5,
+            max_tokens=800
         )
         return translated.strip()
     except Exception as e:
-        logger.warning(f"翻译失败，使用原始提示词: {e}")
+        logger.warning(f"提示词转换失败，使用原始提示词: {e}")
         return prompt
 
 
