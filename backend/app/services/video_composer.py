@@ -382,22 +382,28 @@ async def _concat_videos(
     concat_file = temp_dir / "concat_list.txt"
     with open(concat_file, "w", encoding="utf-8") as f:
         for vp in video_paths:
-            # 使用正斜杠，避免 Windows 路径问题
-            f.write(f"file '{str(vp).replace(chr(92), '/')}'\n")
+            # 只使用文件名，因为 concat 列表文件和视频片段在同一目录
+            # 这样避免路径拼接问题
+            f.write(f"file '{vp.name}'\n")
+    
+    # 确保输出路径是绝对路径，因为我们要切换工作目录
+    abs_output_path = output_path.resolve()
+    abs_concat_file = concat_file.resolve()
     
     # 简单 concat
     cmd = [
         settings.FFMPEG_PATH,
         "-f", "concat",
         "-safe", "0",
-        "-i", str(concat_file),
+        "-i", str(abs_concat_file),
         "-c", "copy",
-        "-y", str(output_path)
+        "-y", str(abs_output_path)
     ]
     
     logger.debug(f"FFmpeg concat 命令: {' '.join(cmd)}")
     
-    process = subprocess.run(cmd, capture_output=True, text=True)
+    # 在 temp_dir 中执行，这样 concat 列表中的相对路径才能正确解析
+    process = subprocess.run(cmd, capture_output=True, text=True, cwd=str(temp_dir))
     
     if process.returncode != 0:
         logger.error(f"FFmpeg concat 错误: {process.stderr}")
