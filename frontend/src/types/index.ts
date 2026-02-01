@@ -170,7 +170,16 @@ export interface Asset {
   file_name: string
   file_size?: number
   mime_type?: string
-  metadata?: Record<string, any>
+  asset_metadata?: {
+    engine?: string
+    seed?: number
+    prompt?: string
+    model?: string
+    width?: number
+    height?: number
+    prompt_id?: string
+    comfyui_filename?: string
+  }
   duration_ms?: number
   version: number
   is_selected: boolean

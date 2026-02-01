@@ -39,7 +39,16 @@ export interface Asset {
   file_path: string
   file_name: string
   file_size?: number
-  metadata?: any
+  asset_metadata?: {
+    engine?: string
+    seed?: number
+    prompt?: string
+    model?: string
+    width?: number
+    height?: number
+    prompt_id?: string
+    comfyui_filename?: string
+  }
   duration_ms?: number
   version: number
   created_at: string

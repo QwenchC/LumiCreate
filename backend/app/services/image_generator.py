@@ -288,7 +288,7 @@ async def execute_image_generation(
                         asset_type=AssetType.IMAGE,
                         file_path=str(image_path),
                         file_name=image_filename,
-                        metadata={
+                        asset_metadata={
                             "engine": "pollinations",
                             "seed": gen_result.get("seed", seed),
                             "prompt": gen_result.get("prompt", params["prompt"]),
@@ -327,7 +327,7 @@ async def execute_image_generation(
                         asset_type=AssetType.IMAGE,
                         file_path=str(image_path),
                         file_name=image_filename,
-                        metadata={
+                        asset_metadata={
                             "engine": "comfyui",
                             "seed": gen_result.get("seed", seed),
                             "prompt": gen_result.get("prompt", params["prompt"]),

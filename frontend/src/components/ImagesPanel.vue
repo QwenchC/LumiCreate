@@ -112,12 +112,42 @@
       :close-on-click-modal="true"
       destroy-on-close
     >
-      <div class="preview-container">
-        <img 
-          :src="previewUrl" 
-          :alt="previewTitle"
-          class="preview-image"
-        />
+      <div class="preview-wrapper">
+        <div class="preview-container">
+          <img 
+            :src="previewUrl" 
+            :alt="previewTitle"
+            class="preview-image"
+          />
+        </div>
+        <div class="preview-info" v-if="previewAsset">
+          <div class="info-section">
+            <div class="info-label">提示词 (Prompt)</div>
+            <div class="info-content prompt-text">
+              {{ previewAsset.asset_metadata?.prompt || '无提示词信息' }}
+            </div>
+          </div>
+          <div class="info-row">
+            <div class="info-item">
+              <span class="info-label">生成引擎</span>
+              <span class="info-value">{{ previewAsset.asset_metadata?.engine || '未知' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">随机种子</span>
+              <span class="info-value">{{ previewAsset.asset_metadata?.seed || '-' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">尺寸</span>
+              <span class="info-value">
+                {{ previewAsset.asset_metadata?.width || '?' }} × {{ previewAsset.asset_metadata?.height || '?' }}
+              </span>
+            </div>
+            <div class="info-item" v-if="previewAsset.asset_metadata?.model">
+              <span class="info-label">模型</span>
+              <span class="info-value">{{ previewAsset.asset_metadata.model }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -145,6 +175,7 @@ const selectedIds = ref<number[]>([])
 const previewVisible = ref(false)
 const previewUrl = ref('')
 const previewTitle = ref('')
+const previewAsset = ref<Asset | null>(null)
 
 const segments = computed(() => segmentStore.segments)
 const segmentAssets = computed(() => segmentStore.segmentAssets)
@@ -211,6 +242,7 @@ const handleSelectImage = async (segmentId: number, assetId: number) => {
 const handlePreviewImage = (asset: Asset) => {
   previewUrl.value = getImageUrl(asset)
   previewTitle.value = asset.file_name || '图片预览'
+  previewAsset.value = asset
   previewVisible.value = true
 }
 
@@ -426,17 +458,76 @@ const handleGenerateAll = async () => {
     overflow: auto;
   }
   
+  .preview-wrapper {
+    display: flex;
+    flex-direction: column;
+  }
+  
   .preview-container {
     display: flex;
     justify-content: center;
     align-items: center;
     background: #1a1a1a;
-    min-height: 400px;
+    min-height: 300px;
+    max-height: 60vh;
     
     .preview-image {
       max-width: 100%;
-      max-height: 85vh;
+      max-height: 60vh;
       object-fit: contain;
+    }
+  }
+  
+  .preview-info {
+    padding: 16px 20px;
+    background: #f5f7fa;
+    border-top: 1px solid #e4e7ed;
+    
+    .info-section {
+      margin-bottom: 12px;
+      
+      .info-label {
+        font-size: 12px;
+        color: #909399;
+        margin-bottom: 6px;
+        font-weight: 500;
+      }
+      
+      .prompt-text {
+        font-size: 13px;
+        color: #303133;
+        line-height: 1.6;
+        padding: 10px 12px;
+        background: #fff;
+        border-radius: 6px;
+        border: 1px solid #e4e7ed;
+        max-height: 120px;
+        overflow-y: auto;
+        word-break: break-all;
+      }
+    }
+    
+    .info-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      
+      .info-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        
+        .info-label {
+          font-size: 12px;
+          color: #909399;
+        }
+        
+        .info-value {
+          font-size: 13px;
+          color: #303133;
+          font-weight: 500;
+        }
+      }
     }
   }
 }
