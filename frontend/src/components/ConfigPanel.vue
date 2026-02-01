@@ -466,27 +466,48 @@
           <!-- ComfyUI 工作流设置 -->
           <div class="config-subsection" v-if="localConfig.image_generation.engine === 'comfyui'">
             <h4>工作流设置</h4>
+            <el-alert 
+              type="info" 
+              :closable="false" 
+              style="margin-bottom: 16px;"
+            >
+              <template #title>
+                <strong>工作流说明</strong>
+              </template>
+              工作流文件存放在 <code>backend/workflows/</code> 目录下。
+              留空则使用默认工作流 <code>Multi-LoRA-SD1.json</code>。
+              系统会自动替换工作流中的提示词、种子和尺寸参数。
+            </el-alert>
             <el-row :gutter="20">
               <el-col :span="12">
-                <el-form-item label="工作流ID">
-                  <el-input v-model="localConfig.image_generation.workflow_id" placeholder="ComfyUI工作流ID" />
+                <el-form-item label="工作流文件">
+                  <el-select 
+                    v-model="localConfig.image_generation.workflow_id" 
+                    placeholder="选择工作流（留空使用默认）"
+                    clearable
+                  >
+                    <el-option label="Multi-LoRA-SD1.json (默认)" value="Multi-LoRA-SD1.json" />
+                  </el-select>
+                  <div class="form-tip">可在 backend/workflows/ 添加更多工作流</div>
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="备用工作流ID">
-                  <el-input v-model="localConfig.image_generation.fallback_workflow_id" placeholder="失败时使用的备用工作流" />
+                <el-form-item label="备用工作流">
+                  <el-input v-model="localConfig.image_generation.fallback_workflow_id" placeholder="失败时使用（可选）" />
                 </el-form-item>
               </el-col>
             </el-row>
             <el-row :gutter="20">
               <el-col :span="12">
-                <el-form-item label="角色LoRA ID">
-                  <el-input v-model="localConfig.image_generation.character_lora_id" placeholder="主体一致性LoRA（预留）" />
+                <el-form-item label="角色LoRA">
+                  <el-input v-model="localConfig.image_generation.character_lora_id" placeholder="主体一致性LoRA（开发中）" disabled />
+                  <div class="form-tip">功能开发中，敬请期待</div>
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="参考图ID">
-                  <el-input v-model="localConfig.image_generation.reference_image_id" placeholder="参考图资产ID（预留）" />
+                <el-form-item label="参考图">
+                  <el-input v-model="localConfig.image_generation.reference_image_id" placeholder="参考图资产ID（开发中）" disabled />
+                  <div class="form-tip">功能开发中，敬请期待</div>
                 </el-form-item>
               </el-col>
             </el-row>

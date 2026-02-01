@@ -88,13 +88,16 @@ class ComfyUIClient:
         加载工作流模板
         
         Args:
-            workflow_path: 工作流文件路径，为 None 时使用默认工作流
+            workflow_path: 工作流文件名或路径，为 None 时使用默认工作流
             
         Returns:
             工作流字典
         """
         if workflow_path:
+            # 支持只传文件名（如 "Multi-LoRA-SD1.json"）或完整路径
             path = Path(workflow_path)
+            if not path.is_absolute():
+                path = WORKFLOWS_DIR / workflow_path
         else:
             # 使用默认工作流
             path = WORKFLOWS_DIR / "Multi-LoRA-SD1.json"

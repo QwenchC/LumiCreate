@@ -164,10 +164,25 @@ class AspectRatio(str, Enum):
     SQUARE = "正方形1:1"
 
 
+class ImageGenerationEngine(str, Enum):
+    """图片生成引擎"""
+    POLLINATIONS = "pollinations"
+    COMFYUI = "comfyui"
+
+
 class ComfyUIConfig(BaseModel):
-    """ComfyUI 出图配置"""
+    """出图配置（支持 Pollinations 和 ComfyUI）"""
+    # 引擎选择
+    engine: ImageGenerationEngine = Field(
+        ImageGenerationEngine.POLLINATIONS, 
+        description="生图引擎：pollinations 或 comfyui"
+    )
+    
+    # Pollinations 特有参数
+    pollinations_model: str = Field("zimage", description="Pollinations 模型")
+    
     # 工作流
-    workflow_id: Optional[str] = Field(None, description="工作流ID")
+    workflow_id: Optional[str] = Field(None, description="工作流文件名（如 Multi-LoRA-SD1.json）")
     
     # 画风
     style: ImageStyle = Field(ImageStyle.CHINESE, description="画风")
@@ -178,7 +193,7 @@ class ComfyUIConfig(BaseModel):
     
     # 采样参数
     steps: int = Field(20, ge=1, le=100, description="采样步数")
-    cfg_scale: float = Field(7.0, ge=1.0, le=20.0, description="CFG Scale")
+    cfg_scale: float = Field(3.5, ge=1.0, le=20.0, description="CFG Scale")
     sampler: str = Field("euler_ancestral", description="采样器")
     seed: Optional[int] = Field(None, description="随机种子（空为随机）")
     
