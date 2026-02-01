@@ -399,12 +399,17 @@ async def _create_segment_video(
         narration_bg_color = narration_config.get("bg_color", "black@0.5")
         narration_margin = narration_config.get("margin", 80)
         
-        # 添加屏幕文字（顶部）
+        # 添加屏幕文字（顶部）- 使用 textfile 避免转义问题
         if on_screen_text and on_screen_text.strip():
-            escaped_on_screen = _escape_ffmpeg_text(on_screen_text.strip())
+            # 写入临时文件
+            on_screen_file = temp_dir / f"onscreen_{index:04d}.txt"
+            with open(on_screen_file, "w", encoding="utf-8") as f:
+                f.write(on_screen_text.strip())
+            # 路径需要转义冒号
+            on_screen_file_path = str(on_screen_file.resolve()).replace("\\", "/").replace(":", "\\:")
             # 顶部居中，带背景框
             vf_parts.append(
-                f"drawtext=text='{escaped_on_screen}':"
+                f"drawtext=textfile='{on_screen_file_path}':"
                 f"fontfile='{font_file}':"
                 f"fontsize={on_screen_font_size}:"
                 f"fontcolor={on_screen_font_color}:"
@@ -413,14 +418,19 @@ async def _create_segment_video(
                 f"box=1:boxcolor={on_screen_bg_color}:boxborderw=10"
             )
         
-        # 添加旁白字幕（底部）- 支持自动换行
+        # 添加旁白字幕（底部）- 支持自动换行，使用 textfile 避免转义问题
         if narration_text and narration_text.strip():
-            # 先换行再转义
+            # 先换行
             wrapped_narration = _wrap_text(narration_text.strip(), max_chars_per_line)
-            escaped_narration = _escape_ffmpeg_text(wrapped_narration)
+            # 写入临时文件（FFmpeg textfile 参数可正确处理换行）
+            narration_file = temp_dir / f"narration_{index:04d}.txt"
+            with open(narration_file, "w", encoding="utf-8") as f:
+                f.write(wrapped_narration)
+            # 使用 textfile 参数，路径需要转义冒号
+            narration_file_path = str(narration_file.resolve()).replace("\\", "/").replace(":", "\\:")
             # 底部居中，带背景框
             vf_parts.append(
-                f"drawtext=text='{escaped_narration}':"
+                f"drawtext=textfile='{narration_file_path}':"
                 f"fontfile='{font_file}':"
                 f"fontsize={narration_font_size}:"
                 f"fontcolor={narration_font_color}:"
