@@ -59,14 +59,27 @@ async def download_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="资产不存在")
     
-    file_path = Path(asset.file_path)
+    # 构建完整路径：STORAGE_PATH + 相对路径
+    file_path = Path(settings.STORAGE_PATH) / asset.file_path
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
+    
+    # 根据资产类型设置正确的 MIME 类型
+    media_type = "application/octet-stream"
+    if asset.asset_type == AssetType.AUDIO:
+        media_type = "audio/mpeg"
+    elif asset.asset_type == AssetType.IMAGE:
+        if asset.file_name and asset.file_name.endswith(".png"):
+            media_type = "image/png"
+        else:
+            media_type = "image/jpeg"
+    elif asset.asset_type == AssetType.VIDEO:
+        media_type = "video/mp4"
     
     return FileResponse(
         path=file_path,
         filename=asset.file_name,
-        media_type="application/octet-stream"
+        media_type=media_type
     )
 
 

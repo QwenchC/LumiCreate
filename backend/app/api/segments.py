@@ -324,6 +324,8 @@ async def generate_audio(
     db: AsyncSession = Depends(get_db)
 ):
     """为段落生成音频"""
+    from app.services.audio_generator import execute_audio_generation
+    
     result = await db.execute(select(Segment).where(Segment.id == segment_id))
     segment = result.scalar_one_or_none()
     if not segment:
@@ -336,4 +338,23 @@ async def generate_audio(
         override_text=request.override_text
     )
     
-    return {"job_id": job.id, "status": job.status, "message": "音频生成任务已创建"}
+    # 同步执行音频生成
+    gen_result = await execute_audio_generation(db, job)
+    
+    if gen_result.get("success"):
+        # 刷新段落获取最新状态
+        await db.refresh(segment)
+        return {
+            "job_id": job.id,
+            "status": "completed",
+            "asset_id": gen_result.get("asset_id"),
+            "duration_ms": gen_result.get("duration_ms"),
+            "message": "音频生成成功"
+        }
+    else:
+        return {
+            "job_id": job.id,
+            "status": "failed",
+            "error": gen_result.get("error"),
+            "message": "音频生成失败"
+        }

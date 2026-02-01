@@ -153,6 +153,8 @@ async def generate_all_project_audio(
     db: AsyncSession = Depends(get_db)
 ):
     """为项目所有段落生成音频"""
+    from app.services.audio_generator import execute_audio_generation
+    
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -164,10 +166,26 @@ async def generate_all_project_audio(
         segment_ids=request.segment_ids
     )
     
+    # 同步执行所有音频生成任务
+    results = []
+    for job in jobs:
+        gen_result = await execute_audio_generation(db, job)
+        results.append({
+            "job_id": job.id,
+            "segment_id": job.segment_id,
+            "success": gen_result.get("success", False),
+            "asset_id": gen_result.get("asset_id"),
+            "duration_ms": gen_result.get("duration_ms"),
+            "error": gen_result.get("error")
+        })
+    
+    success_count = sum(1 for r in results if r["success"])
+    
     return {
         "status": "success",
-        "message": f"已创建 {len(jobs)} 个音频生成任务",
-        "job_ids": [job.id for job in jobs]
+        "message": f"已完成 {success_count}/{len(jobs)} 个音频生成",
+        "job_ids": [job.id for job in jobs],
+        "results": results
     }
 
 
