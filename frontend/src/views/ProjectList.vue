@@ -85,7 +85,8 @@ onMounted(() => {
 })
 
 const formatDate = (date: string) => {
-  return dayjs(date).format('YYYY-MM-DD HH:mm')
+  // 使用固定 +8 时区显示（本地时区为 UTC+8）
+  return dayjs(date).utcOffset(8).format('YYYY-MM-DD HH:mm')
 }
 
 const getStatusType = (status: string) => {
@@ -186,6 +187,8 @@ const handleDelete = async (id: number) => {
     justify-content: space-between;
     align-items: flex-start;
     margin-bottom: 12px;
+    /* 给 header 右侧留出空间，避免标签与绝对定位的操作按钮重叠 */
+    padding-right: 72px;
     
     h3 {
       font-size: 16px;
