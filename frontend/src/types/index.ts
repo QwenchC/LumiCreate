@@ -92,18 +92,43 @@ export interface TTSConfig {
 }
 
 export interface VideoComposerConfig {
-  frame_rate: number
+  frame_rate: number | string
   resolution: string
-  transition: string
-  transition_duration_ms: number
+  is_portrait?: boolean
+  transition_type?: string
+  transition_duration?: number
+  // Ken Burns 效果
+  kenburns_enabled?: boolean
+  kenburns_intensity?: number
+  // 字幕
   subtitle_enabled: boolean
+  burn_subtitle?: boolean
+  subtitle_format?: string
+  subtitle_font?: string
+  subtitle_font_size?: number
+  subtitle_color?: string
+  subtitle_outline?: boolean
+  subtitle_position?: string
   subtitle_style?: SubtitleStyle
+  // 背景音乐
   bgm_enabled: boolean
+  bgm_asset_id?: number
   bgm_path?: string
   bgm_volume: number
-  ken_burns_enabled: boolean
-  output_format: string
-  output_quality: string
+  bgm_ducking?: boolean
+  // 水印
+  watermark_enabled?: boolean
+  watermark_text?: string
+  // 时长
+  min_segment_duration?: number
+  segment_padding?: number
+  fallback_chars_per_second?: number
+  // 兼容旧字段
+  transition?: string
+  transition_duration_ms?: number
+  ken_burns_enabled?: boolean
+  output_format?: string
+  output_quality?: string
 }
 
 export interface SubtitleStyle {

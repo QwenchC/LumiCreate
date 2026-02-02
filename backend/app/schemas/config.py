@@ -305,6 +305,10 @@ class VideoComposerConfig(BaseModel):
     transition_type: TransitionType = Field(TransitionType.FADE, description="转场类型")
     transition_duration: float = Field(0.3, ge=0.0, le=2.0, description="转场时长（秒）")
     
+    # 图片动效（Ken Burns 效果）
+    kenburns_enabled: bool = Field(True, description="是否启用图片动效（缓慢推拉缩放）")
+    kenburns_intensity: float = Field(0.15, ge=0.05, le=0.3, description="动效强度（0.05-0.3）")
+    
     # 背景音乐
     bgm_enabled: bool = Field(False, description="是否启用背景音乐")
     bgm_asset_id: Optional[int] = Field(None, description="背景音乐资产ID")

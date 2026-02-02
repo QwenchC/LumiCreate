@@ -652,6 +652,32 @@
             </el-row>
           </div>
           
+          <!-- 图片动效 -->
+          <div class="config-subsection">
+            <h4>图片动效</h4>
+            <el-row :gutter="20">
+              <el-col :span="8">
+                <el-form-item label="启用动效">
+                  <el-switch v-model="localConfig.video_composer.kenburns_enabled" />
+                  <span class="form-tip">Ken Burns 效果：缓慢推拉缩放</span>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12" v-if="localConfig.video_composer.kenburns_enabled">
+                <el-form-item label="动效强度">
+                  <el-slider 
+                    v-model="localConfig.video_composer.kenburns_intensity" 
+                    :min="0.05" 
+                    :max="0.3" 
+                    :step="0.01" 
+                    :format-tooltip="(val: number) => `${Math.round(val * 100)}%`"
+                    show-input 
+                  />
+                  <span class="form-tip">值越大，推拉幅度越明显</span>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </div>
+          
           <!-- 背景音乐 -->
           <div class="config-subsection">
             <h4>背景音乐</h4>
@@ -938,6 +964,8 @@ const defaultConfig = {
     is_portrait: true,
     transition_type: '淡入淡出',
     transition_duration: 0.3,
+    kenburns_enabled: true,
+    kenburns_intensity: 0.15,
     bgm_enabled: false,
     bgm_asset_id: null,
     bgm_volume: 0.3,
