@@ -22,6 +22,11 @@ logging.basicConfig(
 logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+# 精简 SQLAlchemy 的查询日志（大量 SQL 查询会占用日志）
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+# 可视情况降低 uvicorn 的访问日志（保留错误级别）
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
