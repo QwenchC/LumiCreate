@@ -24,9 +24,7 @@
           <el-icon><Microphone /></el-icon>
           批量生成语音
         </el-button>
-        <el-button @click="handleGenerateAll" :loading="batchGenerating">
-          为所有段落生成
-        </el-button>
+        <!-- 已有“批量生成”与“全选”，移除冗余的“为所有段落生成”按钮 -->
       </div>
     </div>
     
