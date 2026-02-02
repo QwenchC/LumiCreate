@@ -129,6 +129,9 @@ class SegmenterConfig(BaseModel):
     min_segment_length: int = Field(50, ge=20, le=500, description="最小段落字数")
     max_segment_length: int = Field(500, ge=100, le=2000, description="最大段落字数")
     
+    # 多场景配置
+    scenes_per_segment: int = Field(2, ge=1, le=5, description="每个段落的场景数（生成多少张图片）")
+    
     # 必须包含的字段
     require_narration: bool = Field(True, description="必须包含旁白")
     require_visual_prompt: bool = Field(True, description="必须包含画面提示词")

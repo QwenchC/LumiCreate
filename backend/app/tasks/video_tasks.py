@@ -5,9 +5,10 @@ import asyncio
 import subprocess
 import uuid
 import random
+import logging
 from pathlib import Path
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from app.celery_app import celery_app
 from app.db.database import async_session
@@ -16,6 +17,7 @@ from app.models.project import Project, ProjectStatus
 from app.models.asset import Asset, AssetType
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
 # Ken Burns 动效类型
 KENBURNS_EFFECTS = [
@@ -161,15 +163,31 @@ async def _create_segment_video(
     temp_dir: Path, 
     index: int
 ) -> Path:
-    """创建单个段落的视频片段（支持 Ken Burns 效果）"""
-    image_path = segment.get("image_path")
+    """
+    创建单个段落的视频片段（支持多场景图片和 Ken Burns 效果）
+    
+    如果段落有多张场景图片，会将总时长平均分配给每张图片，
+    每张图片应用不同的 Ken Burns 效果以增加视觉多样性。
+    """
+    # 获取图片路径列表（新格式）或单张图片（向后兼容）
+    image_paths = segment.get("image_paths", [])
+    if not image_paths:
+        single_image = segment.get("image_path")
+        if single_image:
+            image_paths = [single_image]
+    
     audio_path = segment.get("audio_path")
     duration_ms = segment.get("duration_ms", 3000)
-    duration_seconds = duration_ms / 1000
+    total_duration_seconds = duration_ms / 1000
     
-    if not image_path or not Path(image_path).exists():
+    # 过滤掉不存在的图片
+    valid_image_paths = [p for p in image_paths if p and Path(p).exists()]
+    
+    if not valid_image_paths:
+        logger.warning(f"段落 {index} 没有有效的图片")
         return None
     
+    num_images = len(valid_image_paths)
     output_path = temp_dir / f"segment_{index:04d}.mp4"
     
     # 视频参数
@@ -185,34 +203,103 @@ async def _create_segment_video(
             width, height = 1280, 720
     
     resolution = f"{width}x{height}"
-    total_frames = int(duration_seconds * frame_rate)
     
     # Ken Burns 效果配置
     kenburns_enabled = config.get("kenburns_enabled", True)
-    kenburns_intensity = config.get("kenburns_intensity", 0.15)  # 缩放幅度 0.1-0.3
+    kenburns_intensity = config.get("kenburns_intensity", 0.15)
+    
+    if num_images == 1:
+        # 单张图片：直接创建视频
+        return await _create_single_image_video(
+            image_path=valid_image_paths[0],
+            audio_path=audio_path,
+            duration_seconds=total_duration_seconds,
+            output_path=output_path,
+            width=width,
+            height=height,
+            frame_rate=frame_rate,
+            kenburns_enabled=kenburns_enabled,
+            kenburns_intensity=kenburns_intensity,
+            effect_index=index
+        )
+    else:
+        # 多张图片：为每张图片创建子视频，然后拼接
+        duration_per_image = total_duration_seconds / num_images
+        sub_videos = []
+        
+        for img_idx, img_path in enumerate(valid_image_paths):
+            sub_output = temp_dir / f"segment_{index:04d}_scene_{img_idx:02d}.mp4"
+            
+            # 创建子视频（无音频）
+            sub_video = await _create_single_image_video(
+                image_path=img_path,
+                audio_path=None,  # 音频在最后合并时添加
+                duration_seconds=duration_per_image,
+                output_path=sub_output,
+                width=width,
+                height=height,
+                frame_rate=frame_rate,
+                kenburns_enabled=kenburns_enabled,
+                kenburns_intensity=kenburns_intensity,
+                effect_index=index * 10 + img_idx  # 不同场景用不同效果
+            )
+            
+            if sub_video:
+                sub_videos.append(sub_video)
+        
+        if not sub_videos:
+            return None
+        
+        # 拼接子视频
+        concat_output = temp_dir / f"segment_{index:04d}_concat.mp4"
+        await _simple_concat_videos(sub_videos, concat_output)
+        
+        # 添加音频
+        if audio_path and Path(audio_path).exists():
+            final_output = await _add_audio_to_video(
+                video_path=concat_output,
+                audio_path=audio_path,
+                output_path=output_path
+            )
+            return final_output
+        else:
+            # 无音频，直接返回拼接后的视频
+            import shutil
+            shutil.move(str(concat_output), str(output_path))
+            return output_path
+
+
+async def _create_single_image_video(
+    image_path: str,
+    audio_path: Optional[str],
+    duration_seconds: float,
+    output_path: Path,
+    width: int,
+    height: int,
+    frame_rate: int,
+    kenburns_enabled: bool,
+    kenburns_intensity: float,
+    effect_index: int
+) -> Optional[Path]:
+    """创建单张图片的视频"""
+    resolution = f"{width}x{height}"
+    total_frames = int(duration_seconds * frame_rate)
     
     # 构建滤镜
-    if kenburns_enabled and duration_seconds >= 2:
-        # 选择随机效果或根据索引轮换
-        effect = KENBURNS_EFFECTS[index % len(KENBURNS_EFFECTS)]
+    if kenburns_enabled and duration_seconds >= 1.5:
+        effect = KENBURNS_EFFECTS[effect_index % len(KENBURNS_EFFECTS)]
         vf = _build_kenburns_filter(effect, width, height, total_frames, kenburns_intensity)
     else:
-        # 简单缩放填充
         vf = f"scale={resolution}:force_original_aspect_ratio=decrease,pad={resolution}:(ow-iw)/2:(oh-ih)/2:black"
     
-    # 构建 FFmpeg 命令
     cmd = [settings.FFMPEG_PATH]
-    
-    # 输入图片（循环）
     cmd.extend(["-loop", "1", "-t", str(duration_seconds)])
     cmd.extend(["-i", image_path])
     
-    # 输入音频（如果有）
     has_audio = audio_path and Path(audio_path).exists()
     if has_audio:
         cmd.extend(["-i", audio_path])
     
-    # 视频滤镜
     cmd.extend([
         "-vf", vf,
         "-c:v", "libx264",
@@ -222,22 +309,68 @@ async def _create_segment_video(
         "-pix_fmt", "yuv420p"
     ])
     
-    # 音频编码
     if has_audio:
         cmd.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
     else:
-        # 无音频时添加静音
+        # 添加静音音轨
         cmd.extend(["-f", "lavfi", "-t", str(duration_seconds)])
         cmd.extend(["-i", "anullsrc=channel_layout=stereo:sample_rate=44100"])
         cmd.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
     
     cmd.extend(["-y", str(output_path)])
     
-    # 执行 FFmpeg
     process = subprocess.run(cmd, capture_output=True, text=True)
     
     if process.returncode != 0:
-        raise Exception(f"FFmpeg 错误: {process.stderr}")
+        logger.error(f"FFmpeg 错误: {process.stderr}")
+        return None
+    
+    return output_path
+
+
+async def _simple_concat_videos(video_paths: List[Path], output_path: Path):
+    """简单拼接多个视频（无转场）"""
+    concat_file = output_path.parent / f"concat_{output_path.stem}.txt"
+    with open(concat_file, "w", encoding="utf-8") as f:
+        for vp in video_paths:
+            abs_path = str(vp.absolute()).replace("\\", "/")
+            f.write(f"file '{abs_path}'\n")
+    
+    cmd = [
+        settings.FFMPEG_PATH,
+        "-f", "concat",
+        "-safe", "0",
+        "-i", str(concat_file),
+        "-c", "copy",
+        "-y", str(output_path)
+    ]
+    
+    process = subprocess.run(cmd, capture_output=True, text=True)
+    concat_file.unlink(missing_ok=True)
+    
+    if process.returncode != 0:
+        raise Exception(f"FFmpeg concat 错误: {process.stderr}")
+
+
+async def _add_audio_to_video(video_path: Path, audio_path: str, output_path: Path) -> Path:
+    """为视频添加音频轨"""
+    cmd = [
+        settings.FFMPEG_PATH,
+        "-i", str(video_path),
+        "-i", audio_path,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        "-y", str(output_path)
+    ]
+    
+    process = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if process.returncode != 0:
+        raise Exception(f"FFmpeg 添加音频错误: {process.stderr}")
     
     return output_path
 
@@ -330,9 +463,13 @@ async def _concat_videos(
     if not video_paths:
         raise ValueError("没有可合并的视频片段")
     
+    logger.info(f"开始合并 {len(video_paths)} 个视频片段...")
+    
     # 转场配置
     transition_type = config.get("transition_type", "淡入淡出")
     transition_duration = float(config.get("transition_duration", 0.3))
+    
+    logger.info(f"转场配置: type={transition_type}, duration={transition_duration}")
     
     # 转场类型映射到 FFmpeg xfade 效果
     transition_map = {
@@ -344,12 +481,16 @@ async def _concat_videos(
     
     xfade_effect = transition_map.get(transition_type)
     
+    logger.info(f"转场效果映射: {transition_type} -> {xfade_effect}")
+    
     # 如果是硬切或只有一个视频，直接 concat
     if xfade_effect is None or len(video_paths) == 1:
+        logger.info("使用简单拼接（无转场效果）")
         await _simple_concat(video_paths, output_path)
         return
     
     # 使用 xfade 实现转场效果
+    logger.info(f"使用 xfade 转场效果: {xfade_effect}")
     await _xfade_concat(video_paths, output_path, xfade_effect, transition_duration)
 
 
@@ -405,6 +546,8 @@ async def _xfade_concat(
         dur = await _get_video_duration(vp)
         durations.append(dur)
     
+    logger.info(f"视频时长列表: {durations}")
+    
     # 构建复杂滤镜
     # 输入: [0:v][0:a][1:v][1:a]...
     # 输出: 链式 xfade
@@ -450,6 +593,8 @@ async def _xfade_concat(
     
     filter_complex = ";".join(filter_parts)
     
+    logger.info(f"xfade 滤镜链: {filter_complex[:500]}...")  # 只打印前500字符
+    
     cmd = [settings.FFMPEG_PATH]
     cmd.extend(inputs)
     cmd.extend([
@@ -464,13 +609,17 @@ async def _xfade_concat(
         "-y", str(output_path)
     ])
     
+    logger.info(f"执行 xfade FFmpeg 命令: {' '.join(cmd[:10])}...")
+    
     process = subprocess.run(cmd, capture_output=True, text=True)
     
     if process.returncode != 0:
         # 如果 xfade 失败，回退到简单拼接
-        import logging
-        logging.warning(f"xfade 转场失败，回退到简单拼接: {process.stderr}")
+        logger.warning(f"xfade 转场失败 (returncode={process.returncode})，回退到简单拼接")
+        logger.warning(f"FFmpeg stderr: {process.stderr[:1000] if process.stderr else 'None'}")
         await _simple_concat(video_paths, output_path)
+    else:
+        logger.info(f"xfade 转场成功完成: {output_path}")
 
 
 async def _get_video_duration(video_path: Path) -> float:

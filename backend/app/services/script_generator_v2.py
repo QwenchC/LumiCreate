@@ -48,27 +48,36 @@ SEGMENT_SYSTEM_PROMPT = """你是一个专业的短视频脚本创作者，擅�
 每个段落必须包含：
 1. segment_title: 段落小标题
 2. narration_text: 旁白文本（用于配音，100-200字）
-3. visual_prompt: 画面提示词（详细的场景描述，用于AI生图，必须包含人物、环境、光线、氛围）
+3. visual_prompts: 画面提示词数组【重要：必须恰好包含 {scenes_per_segment} 个场景描述】
+   - 每个场景描述都应该是独立的画面，包含人物、环境、光线、氛围
+   - 场景应该与旁白内容的推进相对应，体现故事的发展变化
+   - 数组长度必须等于 {scenes_per_segment}，不能多也不能少
 4. on_screen_text: 屏幕金句（可选，10-20字精炼语句）
 5. mood: 氛围标签（紧张/温馨/热血/恐怖/轻松/史诗等）
 6. shot_type: 镜头类型（远景/中景/近景/特写）
 
 输出格式（JSON数组）：
 [
-    {
+    {{
         "segment_title": "...",
         "narration_text": "...",
-        "visual_prompt": "...",
+        "visual_prompts": [
+            "场景1的详细描述（必须填写）",
+            "场景2的详细描述（必须填写）",
+            ...共 {scenes_per_segment} 个场景
+        ],
         "on_screen_text": "...",
         "mood": "...",
         "shot_type": "..."
-    }
+    }}
 ]
 
-重要：
+【强制要求】：
+- visual_prompts 数组必须恰好包含 {scenes_per_segment} 个元素，这是硬性要求
+- 如果配置要求3个场景，你必须输出3个场景描述
 - 确保内容与前文衔接自然
 - 旁白要适合口语朗读，节奏感强
-- visual_prompt 要足够详细，能直接作为 AI 绘图 prompt
+- 多个场景应该体现旁白内容的不同阶段或画面切换
 - 返回纯JSON数组，不要有其他文字"""
 
 
@@ -119,28 +128,31 @@ class ScriptOutline:
 
 def _build_outline_prompt(config: Dict[str, Any], topic: str, additional_instructions: str = "") -> str:
     """构建大纲生成提示词"""
+    # 支持完整的 project_config 或直接的 script_generation 配置
+    script_config = config.get("script_generation", config)
+    
     parts = []
     
     # 基础配置
-    if config.get("genre"):
-        parts.append(f"题材类型：{config['genre']}")
-    if config.get("audience_taste"):
-        parts.append(f"受众口味：{config['audience_taste']}")
-    if config.get("narrative_perspective"):
-        parts.append(f"叙事视角：{config['narrative_perspective']}")
-    if config.get("writing_style"):
-        parts.append(f"文风：{config['writing_style']}")
+    if script_config.get("genre"):
+        parts.append(f"题材类型：{script_config['genre']}")
+    if script_config.get("audience_taste"):
+        parts.append(f"受众口味：{script_config['audience_taste']}")
+    if script_config.get("narrative_perspective"):
+        parts.append(f"叙事视角：{script_config['narrative_perspective']}")
+    if script_config.get("writing_style"):
+        parts.append(f"文风：{script_config['writing_style']}")
     
     # 主线设定
-    if config.get("world_setting"):
-        parts.append(f"世界观设定：{config['world_setting']}")
-    if config.get("golden_finger"):
-        parts.append(f"主角金手指：{config['golden_finger']}")
-    if config.get("conflict_type"):
-        parts.append(f"核心冲突：{config['conflict_type']}")
+    if script_config.get("world_setting"):
+        parts.append(f"世界观设定：{script_config['world_setting']}")
+    if script_config.get("golden_finger"):
+        parts.append(f"主角金手指：{script_config['golden_finger']}")
+    if script_config.get("conflict_type"):
+        parts.append(f"核心冲突：{script_config['conflict_type']}")
     
     # 角色
-    protagonist = config.get("protagonist", {})
+    protagonist = script_config.get("protagonist", {})
     if protagonist:
         char_info = []
         if protagonist.get("name"):
@@ -155,17 +167,17 @@ def _build_outline_prompt(config: Dict[str, Any], topic: str, additional_instruc
             parts.append(f"主角设定：{', '.join(char_info)}")
     
     # 节奏
-    if config.get("pacing"):
-        parts.append(f"叙事节奏：{config['pacing']}")
-    if config.get("twist_frequency"):
-        parts.append(f"反转频率：{config['twist_frequency']}")
-    if config.get("climax_position"):
-        parts.append(f"高潮位置：{config['climax_position']}")
+    if script_config.get("pacing"):
+        parts.append(f"叙事节奏：{script_config['pacing']}")
+    if script_config.get("twist_frequency"):
+        parts.append(f"反转频率：{script_config['twist_frequency']}")
+    if script_config.get("climax_position"):
+        parts.append(f"高潮位置：{script_config['climax_position']}")
     
     # 长度目标 - 这很重要
-    target_words = config.get("target_word_count", 0)
-    if not target_words and config.get("target_duration_minutes"):
-        target_words = config["target_duration_minutes"] * 180
+    target_words = script_config.get("target_word_count", 0)
+    if not target_words and script_config.get("target_duration_minutes"):
+        target_words = script_config["target_duration_minutes"] * 180
     
     if target_words:
         # 估算章节数：每章约500-800字
@@ -177,11 +189,11 @@ def _build_outline_prompt(config: Dict[str, Any], topic: str, additional_instruc
     
     # 合规
     compliance = []
-    if config.get("no_violence"):
+    if script_config.get("no_violence"):
         compliance.append("避免血腥暴力")
-    if config.get("no_adult_content"):
+    if script_config.get("no_adult_content"):
         compliance.append("避免成人内容")
-    if config.get("no_sensitive_topics"):
+    if script_config.get("no_sensitive_topics"):
         compliance.append("避免敏感话题")
     if compliance:
         parts.append(f"内容规范：{', '.join(compliance)}")
@@ -203,6 +215,9 @@ def _build_segment_prompt(
     config: Dict[str, Any]
 ) -> str:
     """构建段落生成提示词"""
+    # 支持完整的 project_config 或直接的 script_generation 配置
+    script_config = config.get("script_generation", config)
+    
     parts = []
     
     parts.append(f"【脚本标题】{outline.title}")
@@ -227,8 +242,8 @@ def _build_segment_prompt(
             parts.append(f"- {seg.get('segment_title', '无标题')}: {seg.get('narration_text', '')[:80]}...")
     
     # 风格要求
-    if config.get("writing_style"):
-        parts.append(f"\n【文风要求】{config['writing_style']}")
+    if script_config.get("writing_style"):
+        parts.append(f"\n【文风要求】{script_config['writing_style']}")
     
     return "\n".join(parts)
 
@@ -369,8 +384,17 @@ async def generate_script_phased(
                 config=config
             )
             
+            # 获取每段场景数配置
+            segmenter_config = config.get("segmenter", {})
+            scenes_per_segment = segmenter_config.get("scenes_per_segment", 2)
+            
+            # 格式化系统提示词，注入场景数
+            formatted_system_prompt = SEGMENT_SYSTEM_PROMPT.format(
+                scenes_per_segment=scenes_per_segment
+            )
+            
             chapter_segments = await _generate_with_retry(
-                system_prompt=SEGMENT_SYSTEM_PROMPT,
+                system_prompt=formatted_system_prompt,
                 user_prompt=segment_prompt,
                 expect_array=True
             )
@@ -382,9 +406,36 @@ async def generate_script_phased(
                     "segment_title": chapter["chapter_title"],
                     "narration_text": f"（第{chapter['chapter_id']}章内容待补充）",
                     "visual_prompt": "场景待描述",
+                    "visual_prompts": ["场景待描述"] * scenes_per_segment,
                     "mood": chapter.get("mood", "叙事"),
                     "shot_type": "中景"
                 }]
+            
+            # 验证并补充每个段落的 visual_prompts 数量
+            for seg in chapter_segments:
+                visual_prompts = seg.get("visual_prompts", [])
+                visual_prompt = seg.get("visual_prompt", "")
+                
+                # 如果没有 visual_prompts 但有 visual_prompt，转换为数组
+                if not visual_prompts and visual_prompt:
+                    visual_prompts = [visual_prompt]
+                
+                # 如果数量不足，复制已有的场景来补充
+                if len(visual_prompts) < scenes_per_segment:
+                    logger.warning(
+                        f"段落 '{seg.get('segment_title', '未知')}' 的场景数 ({len(visual_prompts)}) "
+                        f"少于配置要求 ({scenes_per_segment})，将进行补充"
+                    )
+                    while len(visual_prompts) < scenes_per_segment:
+                        # 基于已有场景生成变体描述
+                        base_prompt = visual_prompts[-1] if visual_prompts else visual_prompt or "场景待描述"
+                        variant_prompt = f"{base_prompt}（场景变体 {len(visual_prompts) + 1}）"
+                        visual_prompts.append(variant_prompt)
+                
+                seg["visual_prompts"] = visual_prompts
+                # 同时保持 visual_prompt 字段与第一个场景同步
+                if visual_prompts:
+                    seg["visual_prompt"] = visual_prompts[0]
             
             # 添加章节信息
             for seg in chapter_segments:

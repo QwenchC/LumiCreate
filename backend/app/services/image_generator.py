@@ -116,6 +116,10 @@ async def generate_segment_images(
     """
     为段落生成图片
     
+    支持两种模式：
+    1. 多场景模式：如果 segment_metadata 中有 visual_prompts 数组，为每个场景生成一张图
+    2. 候选图模式：否则生成 count 张候选图供用户选择
+    
     Args:
         db: 数据库会话
         segment: 段落对象
@@ -138,23 +142,43 @@ async def generate_segment_images(
     if not image_config:
         image_config = project.project_config.get("comfyui", {})
     
-    # 如果没有指定 count，从项目配置读取
-    if count is None:
-        count = image_config.get("candidates_per_segment", 3)
+    # 检查是否有多场景 visual_prompts
+    segment_metadata = segment.segment_metadata or {}
+    visual_prompts = segment_metadata.get("visual_prompts", [])
+    
+    # 获取每个场景的候选图数量
+    candidates_per_scene = image_config.get("candidates_per_segment", 3)
+    if count is not None:
+        candidates_per_scene = count  # 允许调用者覆盖
+    
+    # 确定生成模式
+    if visual_prompts and len(visual_prompts) >= 1:
+        # 多场景模式：为每个场景生成多个候选图
+        generation_mode = "scenes"
+        # 构建场景-候选列表：[(scene_index, candidate_index, prompt), ...]
+        prompts_to_generate = []
+        for scene_idx, prompt in enumerate(visual_prompts):
+            for candidate_idx in range(candidates_per_scene):
+                prompts_to_generate.append({
+                    "scene_index": scene_idx,
+                    "candidate_index": candidate_idx,
+                    "prompt": prompt
+                })
+    else:
+        # 单场景候选图模式（向后兼容）
+        generation_mode = "candidates"
+        base_prompt = override_prompt or segment.visual_prompt or ""
+        prompts_to_generate = []
+        for candidate_idx in range(candidates_per_scene):
+            prompts_to_generate.append({
+                "scene_index": 0,
+                "candidate_index": candidate_idx,
+                "prompt": base_prompt
+            })
     
     # 获取生图引擎：pollinations 或 comfyui
     engine = image_config.get("engine", "pollinations")
-    
-    # 构建任务参数
-    prompt = override_prompt or segment.visual_prompt or ""
     style = image_config.get("style", "国风")
-    
-    # 构建完整提示词（包含风格和氛围前缀）
-    full_prompt = build_full_prompt(
-        base_prompt=prompt,
-        style=style,
-        mood=segment.mood
-    )
     
     # 计算尺寸
     resolution = image_config.get("resolution", "1024")
@@ -163,9 +187,11 @@ async def generate_segment_images(
     
     job_params = {
         "segment_id": segment.id,
-        "count": count,
-        "prompt": full_prompt,
+        "generation_mode": generation_mode,
+        "prompts": prompts_to_generate,  # 场景提示词列表
+        "count": len(prompts_to_generate),
         "engine": engine,
+        "style": style,
         "negative_prompt": image_config.get("negative_prompt", "low quality, blurry"),
         "seed": override_seed,
         "width": width,
@@ -241,8 +267,16 @@ async def execute_image_generation(
     
     params = job.params
     segment_id = params["segment_id"]
-    count = params.get("count", 1)
+    generation_mode = params.get("generation_mode", "candidates")
+    prompts = params.get("prompts", [])
+    count = len(prompts) if prompts else params.get("count", 1)
     engine = params.get("engine", "pollinations")
+    style = params.get("style", "国风")
+    
+    # 向后兼容：如果没有 prompts 列表，使用旧的单 prompt 模式
+    if not prompts:
+        single_prompt = params.get("prompt", "")
+        prompts = [single_prompt] * count
     
     # 获取段落
     result = await db.execute(select(Segment).where(Segment.id == segment_id))
@@ -266,10 +300,28 @@ async def execute_image_generation(
     failed_count = 0
     
     try:
-        for i in range(count):
+        for i, prompt_info in enumerate(prompts):
             # 更新进度
             job.progress = (i / count) * 100
             await db.commit()
+            
+            # 解析提示词信息（兼容新旧格式）
+            if isinstance(prompt_info, dict):
+                prompt = prompt_info.get("prompt", "")
+                scene_index = prompt_info.get("scene_index", 0)
+                candidate_index = prompt_info.get("candidate_index", 0)
+            else:
+                # 向后兼容：旧格式是纯字符串
+                prompt = prompt_info
+                scene_index = i if generation_mode == "scenes" else 0
+                candidate_index = i if generation_mode == "candidates" else 0
+            
+            # 构建完整提示词（包含风格和氛围前缀）
+            full_prompt = build_full_prompt(
+                base_prompt=prompt,
+                style=style,
+                mood=segment.mood
+            )
             
             # 生成种子 (Pollinations API 限制种子范围为 0-999999999)
             seed = params.get("seed") or uuid.uuid4().int % 1000000000
@@ -281,7 +333,7 @@ async def execute_image_generation(
                     image_path = output_dir / image_filename
                     
                     gen_result = await generate_image_pollinations(
-                        prompt=params["prompt"],
+                        prompt=full_prompt,
                         output_path=image_path,
                         width=params.get("width", 1024),
                         height=params.get("height", 1024),
@@ -291,7 +343,7 @@ async def execute_image_generation(
                     )
                     
                     if not gen_result.get("success"):
-                        logger.warning(f"第 {i+1} 张图片生成失败: {gen_result.get('error')}")
+                        logger.warning(f"场景{scene_index+1}候选{candidate_index+1}生成失败: {gen_result.get('error')}")
                         failed_count += 1
                         continue
                     
@@ -305,10 +357,14 @@ async def execute_image_generation(
                         asset_metadata={
                             "engine": "pollinations",
                             "seed": gen_result.get("seed", seed),
-                            "prompt": gen_result.get("prompt", params["prompt"]),
+                            "prompt": gen_result.get("prompt", full_prompt),
+                            "original_prompt": prompt,  # 原始中文场景描述
                             "model": gen_result.get("model"),
                             "width": gen_result.get("width"),
-                            "height": gen_result.get("height")
+                            "height": gen_result.get("height"),
+                            "scene_index": scene_index,  # 场景索引
+                            "candidate_index": candidate_index,  # 候选索引
+                            "generation_mode": generation_mode
                         }
                     )
                 else:
@@ -317,8 +373,8 @@ async def execute_image_generation(
                     from app.services.pollinations_client import translate_prompt_to_english
                     
                     # 翻译提示词为英文
-                    translated_prompt = await translate_prompt_to_english(params["prompt"])
-                    logger.info(f"ComfyUI 翻译提示词: {params['prompt'][:50]}... -> {translated_prompt[:50]}...")
+                    translated_prompt = await translate_prompt_to_english(full_prompt)
+                    logger.info(f"ComfyUI 翻译提示词: {full_prompt[:50]}... -> {translated_prompt[:50]}...")
                     
                     image_filename = f"{uuid.uuid4()}.png"
                     image_path = output_dir / image_filename
@@ -336,7 +392,7 @@ async def execute_image_generation(
                     )
                     
                     if not gen_result.get("success"):
-                        logger.warning(f"第 {i+1} 张图片生成失败 (ComfyUI): {gen_result.get('error')}")
+                        logger.warning(f"场景{scene_index+1}候选{candidate_index+1}生成失败 (ComfyUI): {gen_result.get('error')}")
                         failed_count += 1
                         continue
                     
@@ -350,11 +406,14 @@ async def execute_image_generation(
                             "engine": "comfyui",
                             "seed": gen_result.get("seed", seed),
                             "prompt": translated_prompt,  # 保存翻译后的提示词
-                            "original_prompt": params["prompt"],  # 同时保存原始中文提示词
+                            "original_prompt": prompt,  # 原始中文场景描述
                             "width": gen_result.get("width"),
                             "height": gen_result.get("height"),
                             "prompt_id": gen_result.get("prompt_id"),
-                            "comfyui_filename": gen_result.get("comfyui_filename")
+                            "comfyui_filename": gen_result.get("comfyui_filename"),
+                            "scene_index": scene_index,  # 场景索引
+                            "candidate_index": candidate_index,  # 候选索引
+                            "generation_mode": generation_mode
                         }
                     )
                 
@@ -363,7 +422,7 @@ async def execute_image_generation(
                 generated_assets.append(asset)
                 
             except Exception as img_error:
-                logger.warning(f"第 {i+1} 张图片生成失败: {img_error}")
+                logger.warning(f"场景{scene_index+1}候选{candidate_index+1}生成失败: {img_error}")
                 failed_count += 1
                 continue
         
@@ -373,7 +432,20 @@ async def execute_image_generation(
         if generated_assets:
             segment.status = SegmentStatus.IMAGES_READY
             
-            # 如果是第一次生成，自动选择第一张
+            # 如果是多场景模式，自动为每个场景选择第一个候选
+            # 存储格式: {"0": asset_id, "1": asset_id, ...}
+            if generation_mode == "scenes" and not segment.segment_metadata.get("selected_scene_images"):
+                selected_scene_images = {}
+                for asset in generated_assets:
+                    scene_idx = str(asset.asset_metadata.get("scene_index", 0))
+                    if scene_idx not in selected_scene_images:
+                        selected_scene_images[scene_idx] = asset.id
+                segment.segment_metadata = {
+                    **segment.segment_metadata,
+                    "selected_scene_images": selected_scene_images
+                }
+            
+            # 向后兼容：如果没有选中图片，选择第一张
             if not segment.selected_image_asset_id:
                 segment.selected_image_asset_id = generated_assets[0].id
         

@@ -291,6 +291,13 @@
           </el-row>
           <el-row :gutter="20">
             <el-col :span="6">
+              <el-form-item label="每段场景数">
+                <el-tooltip content="每个段落生成多少个画面场景，避免单张图片展示时间过长" placement="top">
+                  <el-input-number v-model="localConfig.segmenter.scenes_per_segment" :min="1" :max="5" />
+                </el-tooltip>
+              </el-form-item>
+            </el-col>
+            <el-col :span="6">
               <el-form-item label="必须包含旁白">
                 <el-switch v-model="localConfig.segmenter.require_narration" />
               </el-form-item>
@@ -305,6 +312,8 @@
                 <el-switch v-model="localConfig.segmenter.require_mood" />
               </el-form-item>
             </el-col>
+          </el-row>
+          <el-row :gutter="20">
             <el-col :span="6">
               <el-form-item label="包含镜头类型">
                 <el-switch v-model="localConfig.segmenter.require_shot_type" />
@@ -903,6 +912,7 @@ const defaultConfig = {
     strategy: '按镜头脚本',
     min_segment_length: 50,
     max_segment_length: 500,
+    scenes_per_segment: 2,  // 每段场景数
     require_narration: true,
     require_visual_prompt: true,
     require_mood: false,

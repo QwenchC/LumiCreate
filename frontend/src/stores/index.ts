@@ -27,6 +27,12 @@ export interface Segment {
   selected_image_asset_id?: number
   audio_asset_id?: number
   duration_ms?: number
+  segment_metadata?: {
+    visual_prompts?: string[]  // 多场景画面描述
+    selected_scene_images?: { [sceneIndex: string]: number }  // 每个场景选中的图片 ID
+    chapter_id?: number
+    chapter_title?: string
+  }
   created_at: string
   updated_at: string
 }
@@ -49,6 +55,9 @@ export interface Asset {
     height?: number
     prompt_id?: string
     comfyui_filename?: string
+    generation_mode?: 'scenes' | 'candidates'  // 生成模式：场景 or 候选
+    scene_index?: number  // 场景索引
+    candidate_index?: number  // 候选索引（每个场景可有多个候选）
   }
   duration_ms?: number
   version: number
@@ -177,6 +186,20 @@ export const useSegmentStore = defineStore('segment', () => {
     }
   }
   
+  const selectSceneImage = async (segmentId: number, sceneIndex: number, assetId: number) => {
+    const response = await segmentApi.selectSceneImage(segmentId, sceneIndex, assetId) as unknown as Segment
+    const index = segments.value.findIndex(s => s.id === segmentId)
+    if (index !== -1) {
+      // 使用扩展运算符确保触发 Vue 响应式更新
+      segments.value[index] = { ...response }
+      // 或者使用 splice 确保数组变更被检测到
+      segments.value.splice(index, 1, { ...response })
+    }
+    if (currentSegment.value?.id === segmentId) {
+      currentSegment.value = { ...response }
+    }
+  }
+  
   return {
     segments,
     currentSegment,
@@ -188,6 +211,7 @@ export const useSegmentStore = defineStore('segment', () => {
     fetchSegmentAssets,
     generateImages,
     selectImage,
+    selectSceneImage,
   }
 })
 

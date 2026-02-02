@@ -115,7 +115,30 @@
               :rows="6"
             />
           </el-form-item>
-          <el-form-item label="画面描述 (用于生成图片)">
+          
+          <!-- 多场景画面描述 -->
+          <el-form-item v-if="hasMultipleVisualPrompts" label="画面描述 (多场景模式)">
+            <div class="visual-prompts-list">
+              <div 
+                v-for="(prompt, index) in editingVisualPrompts" 
+                :key="index" 
+                class="visual-prompt-item"
+              >
+                <div class="prompt-header">
+                  <el-tag size="small" type="primary">场景 {{ index + 1 }}</el-tag>
+                </div>
+                <el-input 
+                  v-model="editingVisualPrompts[index]" 
+                  type="textarea" 
+                  :rows="3"
+                  :placeholder="`描述场景 ${index + 1} 的画面...`"
+                />
+              </div>
+            </div>
+          </el-form-item>
+          
+          <!-- 单场景画面描述（向后兼容） -->
+          <el-form-item v-else label="画面描述 (用于生成图片)">
             <el-input 
               v-model="editingSegment.visual_prompt" 
               type="textarea" 
@@ -200,6 +223,7 @@ const splitting = ref(false)
 const showSegmentEditor = ref(false)
 const showRawEditor = ref(false)
 const editingSegment = ref<Partial<Segment>>({})
+const editingVisualPrompts = ref<string[]>([])
 
 // 流式生成状态
 const streamStatus = ref('准备生成...')
@@ -213,10 +237,25 @@ const generationProgress = ref({
 const segments = computed(() => segmentStore.segments)
 const currentSegment = computed(() => segmentStore.currentSegment)
 
+// 检查当前段落是否有多个场景
+const hasMultipleVisualPrompts = computed(() => {
+  const prompts = currentSegment.value?.segment_metadata?.visual_prompts
+  return Array.isArray(prompts) && prompts.length > 1
+})
+
 // 监听当前段落变化
 watch(currentSegment, (segment) => {
   if (segment) {
     editingSegment.value = { ...segment }
+    // 初始化多场景编辑数组
+    const visualPrompts = segment.segment_metadata?.visual_prompts
+    if (Array.isArray(visualPrompts) && visualPrompts.length > 0) {
+      editingVisualPrompts.value = [...visualPrompts]
+    } else if (segment.visual_prompt) {
+      editingVisualPrompts.value = [segment.visual_prompt]
+    } else {
+      editingVisualPrompts.value = []
+    }
     showSegmentEditor.value = true
   }
 })
@@ -402,7 +441,21 @@ const selectSegment = (segment: Segment) => {
 const saveSegment = async () => {
   if (!currentSegment.value) return
   
-  await segmentStore.updateSegment(currentSegment.value.id, editingSegment.value)
+  // 准备更新数据
+  const updateData = { ...editingSegment.value }
+  
+  // 如果有多场景，更新 segment_metadata 中的 visual_prompts
+  if (editingVisualPrompts.value.length > 0) {
+    const existingMetadata = currentSegment.value.segment_metadata || {}
+    updateData.segment_metadata = {
+      ...existingMetadata,
+      visual_prompts: editingVisualPrompts.value
+    }
+    // 同时更新主 visual_prompt 为第一个场景
+    updateData.visual_prompt = editingVisualPrompts.value[0] || ''
+  }
+  
+  await segmentStore.updateSegment(currentSegment.value.id, updateData)
   showSegmentEditor.value = false
   ElMessage.success('段落已保存')
 }
@@ -547,6 +600,27 @@ const getSegmentStatusLabel = (segment: Segment) => {
     border-top: 1px solid #ebeef5;
     display: flex;
     gap: 12px;
+  }
+  
+  // 多场景画面描述样式
+  .visual-prompts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    
+    .visual-prompt-item {
+      background: #f5f7fa;
+      border-radius: 8px;
+      padding: 12px;
+      border: 1px solid #e4e7ed;
+      
+      .prompt-header {
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+    }
   }
 }
 </style>

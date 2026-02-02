@@ -59,40 +59,87 @@
           {{ segment.visual_prompt || segment.narration_text }}
         </div>
         
-        <div class="images-grid">
+        <!-- 多场景模式：按场景分组显示 -->
+        <template v-if="hasMultipleScenes(segment.id)">
           <div 
-            v-for="asset in getSegmentImages(segment.id)" 
-            :key="asset.id"
-            class="image-candidate"
-            :class="{ selected: segment.selected_image_asset_id === asset.id }"
-            @click="handleSelectImage(segment.id, asset.id)"
+            v-for="sceneInfo in getGroupedScenes(segment.id)" 
+            :key="sceneInfo.sceneIndex"
+            class="scene-group"
           >
-            <img :src="getImageUrl(asset)" :alt="asset.file_name" />
-            <div class="image-overlay">
-              <el-icon v-if="segment.selected_image_asset_id === asset.id"><Check /></el-icon>
+            <div class="scene-header">
+              <span class="scene-label">场景 {{ sceneInfo.sceneIndex + 1 }}</span>
+              <span class="scene-prompt">{{ sceneInfo.prompt }}</span>
             </div>
-            <div class="image-version">v{{ asset.version }}</div>
-            <!-- 放大预览按钮 -->
+            <div class="images-grid">
+              <div 
+                v-for="asset in sceneInfo.assets" 
+                :key="asset.id"
+                class="image-candidate"
+                :class="{ selected: isSceneImageSelected(segment, sceneInfo.sceneIndex, asset.id) }"
+                @click="handleSelectSceneImage(segment.id, sceneInfo.sceneIndex, asset.id)"
+              >
+                <img :src="getImageUrl(asset)" :alt="asset.file_name" />
+                <div class="image-overlay">
+                  <el-icon v-if="isSceneImageSelected(segment, sceneInfo.sceneIndex, asset.id)"><Check /></el-icon>
+                </div>                <!-- 选中状态标记（常驻显示） -->
+                <div class="selected-badge" v-if="isSceneImageSelected(segment, sceneInfo.sceneIndex, asset.id)">
+                  <el-icon><Check /></el-icon>
+                  <span>已选</span>
+                </div>                <div class="candidate-index">候选 {{ (asset.asset_metadata?.candidate_index ?? 0) + 1 }}</div>
+                <!-- 放大预览按钮 -->
+                <div 
+                  class="zoom-btn" 
+                  @click.stop="handlePreviewImage(asset)"
+                  title="查看大图"
+                >
+                  <el-icon><ZoomIn /></el-icon>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="scene-mode-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>多场景模式：请为每个场景选择一张图片，所有选中的图片将按顺序显示在最终视频中</span>
+          </div>
+        </template>
+        
+        <!-- 单场景/候选模式：传统显示 -->
+        <template v-else>
+          <div class="images-grid">
             <div 
-              class="zoom-btn" 
-              @click.stop="handlePreviewImage(asset)"
-              title="查看大图"
+              v-for="asset in getSegmentImages(segment.id)" 
+              :key="asset.id"
+              class="image-candidate"
+              :class="{ selected: segment.selected_image_asset_id === asset.id }"
+              @click="handleSelectImage(segment.id, asset.id)"
             >
-              <el-icon><ZoomIn /></el-icon>
+              <img :src="getImageUrl(asset)" :alt="asset.file_name" />
+              <div class="image-overlay">
+                <el-icon v-if="segment.selected_image_asset_id === asset.id"><Check /></el-icon>
+              </div>
+              <div class="image-version">v{{ asset.version }}</div>
+              <!-- 放大预览按钮 -->
+              <div 
+                class="zoom-btn" 
+                @click.stop="handlePreviewImage(asset)"
+                title="查看大图"
+              >
+                <el-icon><ZoomIn /></el-icon>
+              </div>
             </div>
           </div>
-          
-          <!-- 空状态 -->
-          <div 
-            v-if="!getSegmentImages(segment.id).length" 
-            class="empty-images"
-          >
-            <el-empty description="暂无图片" :image-size="60">
-              <el-button size="small" @click="handleGenerateSingle(segment.id)">
-                生成图片
-              </el-button>
-            </el-empty>
-          </div>
+        </template>
+        
+        <!-- 空状态 -->
+        <div 
+          v-if="!getSegmentImages(segment.id).length" 
+          class="empty-images"
+        >
+          <el-empty description="暂无图片" :image-size="60">
+            <el-button size="small" @click="handleGenerateSingle(segment.id)">
+              生成图片
+            </el-button>
+          </el-empty>
         </div>
       </div>
       
@@ -164,8 +211,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ZoomIn } from '@element-plus/icons-vue'
-import { useSegmentStore, type Segment, type Asset } from '@/stores'
+import { ZoomIn, InfoFilled } from '@element-plus/icons-vue'
+import { useSegmentStore, type Asset } from '@/stores'
 import { jobApi } from '@/api'
 
 const props = defineProps<{
@@ -220,6 +267,73 @@ watch(segments, async (newSegments) => {
 
 const getSegmentImages = (segmentId: number): Asset[] => {
   return segmentAssets.value.get(segmentId) || []
+}
+
+// 判断是否有多个场景（新的多场景模式）
+const hasMultipleScenes = (segmentId: number): boolean => {
+  const assets = segmentAssets.value.get(segmentId) || []
+  if (assets.length === 0) return false
+  
+  // 检查是否有 scene_index 并且有多个不同的场景
+  const sceneIndices = new Set<number>()
+  for (const asset of assets) {
+    const sceneIndex = asset.asset_metadata?.scene_index
+    if (sceneIndex !== undefined && sceneIndex !== null) {
+      sceneIndices.add(sceneIndex)
+    }
+  }
+  return sceneIndices.size > 1
+}
+
+// 按场景分组获取图片
+interface SceneGroup {
+  sceneIndex: number
+  prompt: string
+  assets: Asset[]
+}
+
+const getGroupedScenes = (segmentId: number): SceneGroup[] => {
+  const assets = segmentAssets.value.get(segmentId) || []
+  const groups: Map<number, SceneGroup> = new Map()
+  
+  for (const asset of assets) {
+    const sceneIndex = asset.asset_metadata?.scene_index ?? 0
+    if (!groups.has(sceneIndex)) {
+      groups.set(sceneIndex, {
+        sceneIndex,
+        prompt: asset.asset_metadata?.original_prompt || '',
+        assets: []
+      })
+    }
+    groups.get(sceneIndex)!.assets.push(asset)
+  }
+  
+  // 按场景索引排序，每个场景内按候选索引排序
+  return Array.from(groups.values())
+    .sort((a, b) => a.sceneIndex - b.sceneIndex)
+    .map(group => ({
+      ...group,
+      assets: group.assets.sort((a, b) => 
+        (a.asset_metadata?.candidate_index ?? 0) - (b.asset_metadata?.candidate_index ?? 0)
+      )
+    }))
+}
+
+// 检查场景图片是否被选中
+const isSceneImageSelected = (segment: any, sceneIndex: number, assetId: number): boolean => {
+  const selectedSceneImages = segment.segment_metadata?.selected_scene_images || {}
+  return selectedSceneImages[String(sceneIndex)] === assetId
+}
+
+// 处理场景图片选择
+const handleSelectSceneImage = async (segmentId: number, sceneIndex: number, assetId: number) => {
+  try {
+    await segmentStore.selectSceneImage(segmentId, sceneIndex, assetId)
+    ElMessage.success(`已选择场景 ${sceneIndex + 1} 的图片`)
+  } catch (error) {
+    console.error('选择场景图片失败:', error)
+    ElMessage.error('选择失败')
+  }
 }
 
 const getImageUrl = (asset: Asset) => {
@@ -277,16 +391,6 @@ const handleBatchGenerate = async () => {
     await jobApi.generateAllImages(props.projectId, selectedIds.value)
     ElMessage.success(`已为 ${selectedIds.value.length} 个段落创建图片生成任务`)
     selectedIds.value = []
-  } finally {
-    batchGenerating.value = false
-  }
-}
-
-const handleGenerateAll = async () => {
-  batchGenerating.value = true
-  try {
-    await jobApi.generateAllImages(props.projectId)
-    ElMessage.success('已为所有段落创建图片生成任务')
   } finally {
     batchGenerating.value = false
   }
@@ -444,6 +548,8 @@ const handleGenerateAll = async () => {
   
   &.selected {
     border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 3px rgba(var(--el-color-primary-rgb), 0.3), 0 4px 12px rgba(var(--el-color-primary-rgb), 0.4);
+    transform: scale(1.02);
     
     .image-overlay {
       opacity: 1;
@@ -456,6 +562,90 @@ const handleGenerateAll = async () => {
   grid-column: 1 / -1;
   padding: 20px;
   text-align: center;
+}
+
+// 场景分组样式
+.scene-group {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  
+  .scene-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    
+    .scene-label {
+      background: var(--el-color-primary);
+      color: #fff;
+      font-size: 12px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    
+    .scene-prompt {
+      font-size: 13px;
+      color: #606266;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+}
+
+// 候选索引标签
+.candidate-index {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+// 选中状态标记（常驻显示）
+.selected-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+  
+  .el-icon {
+    font-size: 14px;
+  }
+}
+
+.scene-mode-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--el-color-primary-light-9);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--el-color-primary-dark-2);
+  
+  .el-icon {
+    font-size: 16px;
+  }
 }
 
 // 图片预览对话框样式

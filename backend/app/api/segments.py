@@ -315,6 +315,55 @@ async def select_image(
     return segment
 
 
+@router.post("/{segment_id}/scenes/{scene_index}/select/{asset_id}", response_model=SegmentResponse)
+async def select_scene_image(
+    segment_id: int,
+    scene_index: int,
+    asset_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """为特定场景选择图片"""
+    result = await db.execute(select(Segment).where(Segment.id == segment_id))
+    segment = result.scalar_one_or_none()
+    if not segment:
+        raise HTTPException(status_code=404, detail="段落不存在")
+    
+    # 验证资产存在且属于该段落和场景
+    asset_result = await db.execute(
+        select(Asset)
+        .where(Asset.id == asset_id)
+        .where(Asset.segment_id == segment_id)
+    )
+    asset = asset_result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="图片资产不存在或不属于该段落")
+    
+    # 验证资产属于指定场景
+    asset_scene_index = asset.asset_metadata.get("scene_index") if asset.asset_metadata else None
+    if asset_scene_index != scene_index:
+        raise HTTPException(status_code=400, detail="该图片不属于指定场景")
+    
+    # 更新场景选择
+    segment_metadata = dict(segment.segment_metadata or {})  # 创建副本
+    selected_scene_images = dict(segment_metadata.get("selected_scene_images", {}))  # 创建副本
+    selected_scene_images[str(scene_index)] = asset_id
+    
+    # 使用 flag_modified 确保 SQLAlchemy 检测到 JSON 字段变化
+    from sqlalchemy.orm.attributes import flag_modified
+    segment.segment_metadata = {
+        **segment_metadata,
+        "selected_scene_images": selected_scene_images
+    }
+    flag_modified(segment, "segment_metadata")
+    
+    if segment.status == SegmentStatus.GENERATING_IMAGES:
+        segment.status = SegmentStatus.IMAGES_READY
+    
+    await db.commit()
+    await db.refresh(segment)
+    return segment
+
+
 # ============ 音频生成相关 ============
 
 @router.post("/{segment_id}/audio/generate")

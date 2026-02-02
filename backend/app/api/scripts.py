@@ -152,8 +152,8 @@ async def phased_generate_project_script(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     
-    # 获取配置
-    config = project.project_config.get("script_generation", {})
+    # 获取配置 - 传入完整的 project_config，以便脚本生成器可以访问 segmenter 等其他配置
+    config = project.project_config or {}
     topic = request.topic or ""
     additional_instructions = request.additional_instructions or ""
     project_id_local = project.id
@@ -318,16 +318,32 @@ async def auto_split_script(
         segments_data = script.structured_content.get("segments", [])
         segments = []
         for idx, seg_data in enumerate(segments_data):
+            # 处理多场景 visual_prompts（数组）
+            visual_prompts = seg_data.get("visual_prompts", [])
+            visual_prompt = seg_data.get("visual_prompt")
+            
+            # 兼容处理：如果有 visual_prompts 数组，使用第一个作为主 visual_prompt
+            if visual_prompts and isinstance(visual_prompts, list):
+                visual_prompt = visual_prompts[0] if visual_prompts else visual_prompt
+            elif visual_prompt and not visual_prompts:
+                # 兼容旧格式：单个 visual_prompt 转为数组
+                visual_prompts = [visual_prompt]
+            
             segment = Segment(
                 project_id=script.project_id,
                 order_index=idx,
                 segment_title=seg_data.get("segment_title"),
                 narration_text=seg_data.get("narration_text", ""),
-                visual_prompt=seg_data.get("visual_prompt"),
+                visual_prompt=visual_prompt,
                 on_screen_text=seg_data.get("on_screen_text"),
                 mood=seg_data.get("mood"),
                 shot_type=seg_data.get("shot_type"),
-                status=SegmentStatus.READY_SCRIPT
+                status=SegmentStatus.READY_SCRIPT,
+                segment_metadata={
+                    "visual_prompts": visual_prompts,  # 存储完整的场景列表
+                    "chapter_id": seg_data.get("chapter_id"),
+                    "chapter_title": seg_data.get("chapter_title")
+                }
             )
             db.add(segment)
             segments.append(segment)

@@ -165,6 +165,24 @@ VALUE_MAPPINGS = {
         "sovits": "gpt_sovits",
         "gpt-sovits": "gpt_sovits",
     },
+    # AI 可能会混淆 genre 和 audience_taste，做映射处理
+    "script_generation.audience_taste": {
+        # 轻松搞笑是 genre，映射到最接近的 audience_taste
+        "轻松搞笑": "下饭",
+        "搞笑": "下饭",
+        "喜剧": "下饭",
+        "轻松": "下饭",
+        "温馨": "治愈",
+        "温暖": "治愈",
+        "感人": "虐心",
+        "催泪": "虐心",
+        "悬疑": "推理烧脑",
+        "烧脑": "推理烧脑",
+        "爽": "爽文",
+        "逆袭": "爽文",
+        "励志": "热血",
+        "燃": "热血",
+    },
 }
 
 

@@ -50,13 +50,66 @@ async def compose_video(
     # 构建合成参数
     segment_data = []
     for segment in segments:
-        # 获取选定的图片
-        image_asset = None
-        if segment.selected_image_asset_id:
-            asset_result = await db.execute(
-                select(Asset).where(Asset.id == segment.selected_image_asset_id)
-            )
-            image_asset = asset_result.scalar_one_or_none()
+        # 获取该段落的选中场景图片配置
+        segment_metadata = segment.segment_metadata or {}
+        selected_scene_images = segment_metadata.get("selected_scene_images", {})
+        
+        # 获取该段落的所有图片
+        all_images_result = await db.execute(
+            select(Asset)
+            .where(Asset.segment_id == segment.id)
+            .where(Asset.asset_type == AssetType.IMAGE)
+        )
+        all_images = all_images_result.scalars().all()
+        
+        # 建立 asset_id -> asset 的映射
+        asset_map = {asset.id: asset for asset in all_images}
+        
+        # 构建场景图片路径列表
+        scene_image_paths = []
+        
+        if selected_scene_images:
+            # 使用用户选择的场景图片
+            for scene_idx_str, asset_id in sorted(selected_scene_images.items(), key=lambda x: int(x[0])):
+                if asset_id in asset_map:
+                    scene_image_paths.append({
+                        "path": asset_map[asset_id].file_path,
+                        "scene_index": int(scene_idx_str)
+                    })
+        else:
+            # 没有选择记录时，回退到旧逻辑：使用每个场景的第一个候选
+            scene_first_images = {}  # scene_index -> first asset
+            for img in all_images:
+                metadata = img.asset_metadata or {}
+                scene_idx = metadata.get("scene_index")
+                if scene_idx is not None:
+                    # 选择每个场景 candidate_index 最小的
+                    candidate_idx = metadata.get("candidate_index", 0)
+                    if scene_idx not in scene_first_images:
+                        scene_first_images[scene_idx] = (candidate_idx, img)
+                    elif candidate_idx < scene_first_images[scene_idx][0]:
+                        scene_first_images[scene_idx] = (candidate_idx, img)
+            
+            for scene_idx in sorted(scene_first_images.keys()):
+                _, img = scene_first_images[scene_idx]
+                scene_image_paths.append({
+                    "path": img.file_path,
+                    "scene_index": scene_idx
+                })
+        
+        # 如果没有场景图片，回退到选定的单张图片
+        if not scene_image_paths:
+            if segment.selected_image_asset_id:
+                asset_result = await db.execute(
+                    select(Asset).where(Asset.id == segment.selected_image_asset_id)
+                )
+                image_asset = asset_result.scalar_one_or_none()
+                if image_asset:
+                    scene_image_paths = [{"path": image_asset.file_path, "scene_index": 0}]
+        
+        # 按 scene_index 排序
+        scene_image_paths.sort(key=lambda x: x.get("scene_index", 0))
+        image_paths = [x["path"] for x in scene_image_paths]
         
         # 获取音频
         audio_asset = None
@@ -87,7 +140,8 @@ async def compose_video(
         segment_data.append({
             "segment_id": segment.id,
             "order_index": segment.order_index,
-            "image_path": image_asset.file_path if image_asset else None,
+            "image_paths": image_paths,  # 多张场景图片路径列表
+            "image_path": image_paths[0] if image_paths else None,  # 向后兼容
             "audio_path": audio_asset.file_path if audio_asset else None,
             "duration_ms": duration_ms,
             "narration_text": segment.narration_text,
@@ -269,14 +323,14 @@ async def execute_video_composition(
 
 
 def _resolve_asset_path(relative_path: str) -> Path:
-    """解析资产文件路径，处理 storage 前缀"""
+    """解析资产文件路径，处理 storage 前缀，返回绝对路径"""
     path = Path(relative_path)
     if str(path).startswith("storage"):
-        # 路径已包含 storage 前缀，直接使用相对于项目根目录的路径
-        return Path(".") / relative_path
+        # 路径已包含 storage 前缀，使用项目根目录的绝对路径
+        return (Path(".") / relative_path).resolve()
     else:
         # 路径是相对于 STORAGE_PATH 的
-        return Path(settings.STORAGE_PATH) / relative_path
+        return (Path(settings.STORAGE_PATH) / relative_path).resolve()
 
 
 import re
@@ -438,40 +492,37 @@ async def _create_segment_video(
     temp_dir: Path,
     index: int
 ) -> Optional[Path]:
-    """创建单个段落的视频片段"""
-    image_path = segment.get("image_path")
+    """创建单个段落的视频片段（支持多场景图片）"""
+    image_paths = segment.get("image_paths", [])  # 多张场景图片
+    image_path = segment.get("image_path")  # 向后兼容：单张图片
     audio_path = segment.get("audio_path")
     duration_ms = segment.get("duration_ms", 3000)
     duration_seconds = duration_ms / 1000
     narration_text = segment.get("narration_text", "")
     on_screen_text = segment.get("on_screen_text", "")
     
-    # 构建完整路径（处理 storage 前缀）
-    if image_path:
-        full_image_path = _resolve_asset_path(image_path)
-        if not full_image_path.exists():
-            logger.warning(f"图片文件不存在: {full_image_path}")
-            return None
-    else:
+    # 确保有图片列表
+    if not image_paths and image_path:
+        image_paths = [image_path]
+    
+    if not image_paths:
         logger.warning(f"段落 {index} 没有图片")
         return None
     
+    # 验证所有图片存在
+    valid_image_paths = []
+    for img_path in image_paths:
+        full_path = _resolve_asset_path(img_path)
+        if full_path.exists():
+            valid_image_paths.append(full_path)
+        else:
+            logger.warning(f"图片文件不存在: {full_path}")
+    
+    if not valid_image_paths:
+        logger.warning(f"段落 {index} 没有有效的图片文件")
+        return None
+    
     output_path = temp_dir / f"segment_{index:04d}.mp4"
-    
-    # 构建 FFmpeg 命令
-    cmd = [settings.FFMPEG_PATH]
-    
-    # 输入图片（循环）
-    cmd.extend(["-loop", "1", "-t", str(duration_seconds)])
-    cmd.extend(["-i", str(full_image_path)])
-    
-    # 输入音频（如果有）
-    has_audio = False
-    if audio_path:
-        full_audio_path = _resolve_asset_path(audio_path)
-        if full_audio_path.exists():
-            cmd.extend(["-i", str(full_audio_path)])
-            has_audio = True
     
     # 视频编码参数
     frame_rate = str(config.get("frame_rate", 30))
@@ -485,6 +536,120 @@ async def _create_segment_video(
             width, height = 1920, 1080
         else:
             width, height = 1280, 720
+    
+    # 计算每张图片的显示时长
+    num_images = len(valid_image_paths)
+    per_image_duration = duration_seconds / num_images
+    
+    # 如果只有一张图片，使用简单逻辑
+    if num_images == 1:
+        return await _create_single_image_segment(
+            image_path=valid_image_paths[0],
+            audio_path=audio_path,
+            duration_seconds=duration_seconds,
+            narration_text=narration_text,
+            on_screen_text=on_screen_text,
+            config=config,
+            temp_dir=temp_dir,
+            output_path=output_path,
+            index=index,
+            width=width,
+            height=height,
+            frame_rate=frame_rate
+        )
+    
+    # 多张图片：为每张图片创建子片段，然后合并
+    sub_video_paths = []
+    for img_idx, img_path in enumerate(valid_image_paths):
+        sub_output = temp_dir / f"segment_{index:04d}_scene_{img_idx:02d}.mp4"
+        scene_duration = per_image_duration
+        
+        # 子场景不添加字幕，字幕会在合并后添加（覆盖整个段落时长）
+        sub_path = await _create_single_image_segment(
+            image_path=img_path,
+            audio_path=None,  # 音频稍后在合并时处理
+            duration_seconds=scene_duration,
+            narration_text="",  # 子场景不添加字幕
+            on_screen_text="",  # 子场景不添加屏幕文字
+            config=config,
+            temp_dir=temp_dir,
+            output_path=sub_output,
+            index=f"{index}_{img_idx}",
+            width=width,
+            height=height,
+            frame_rate=frame_rate,
+            is_sub_segment=True
+        )
+        if sub_path:
+            sub_video_paths.append(sub_path)
+    
+    if not sub_video_paths:
+        logger.warning(f"段落 {index} 没有生成任何场景视频")
+        return None
+    
+    # 合并所有场景视频
+    if len(sub_video_paths) == 1:
+        # 只有一个场景成功，直接使用
+        shutil.copy(sub_video_paths[0], output_path)
+    else:
+        # 使用 concat 合并多个场景，并添加字幕
+        await _concat_scene_videos(
+            sub_video_paths, 
+            output_path, 
+            audio_path,
+            duration_seconds,
+            narration_text,
+            on_screen_text,
+            temp_dir, 
+            config,
+            index,
+            width,
+            height
+        )
+    
+    return output_path
+
+
+async def _create_single_image_segment(
+    image_path: Path,
+    audio_path: Optional[str],
+    duration_seconds: float,
+    narration_text: str,
+    on_screen_text: str,
+    config: dict,
+    temp_dir: Path,
+    output_path: Path,
+    index: any,
+    width: int,
+    height: int,
+    frame_rate: str,
+    is_sub_segment: bool = False
+) -> Optional[Path]:
+    """创建单张图片的视频片段"""
+    
+    # 构建 FFmpeg 命令
+    cmd = [settings.FFMPEG_PATH]
+    
+    # 输入图片（循环）
+    cmd.extend(["-loop", "1", "-t", str(duration_seconds)])
+    cmd.extend(["-i", str(image_path)])
+    
+    # 输入音频（如果有）
+    has_audio = False
+    if audio_path:
+        full_audio_path = _resolve_asset_path(audio_path)
+        if full_audio_path.exists():
+            cmd.extend(["-i", str(full_audio_path)])
+            has_audio = True
+    
+    # 无音频时添加静音输入源（必须在滤镜之前添加）
+    if not has_audio:
+        cmd.extend([
+            "-f", "lavfi",
+            "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100"
+        ])
+    
+    is_portrait = config.get("is_portrait", True)
     
     # 视频滤镜：缩放并填充（保持比例，黑边填充）
     vf_parts = [f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"]
@@ -519,7 +684,7 @@ async def _create_segment_video(
         # 添加屏幕文字（顶部）- 使用 textfile 避免转义问题
         if on_screen_text and on_screen_text.strip():
             # 写入临时文件
-            on_screen_file = temp_dir / f"onscreen_{index:04d}.txt"
+            on_screen_file = temp_dir / f"onscreen_{index}.txt"
             with open(on_screen_file, "w", encoding="utf-8") as f:
                 f.write(on_screen_text.strip())
             # 路径需要转义冒号
@@ -554,7 +719,7 @@ async def _create_segment_video(
                 )
                 
                 # 写入 ASS 文件
-                ass_file = temp_dir / f"subtitle_{index:04d}.ass"
+                ass_file = temp_dir / f"subtitle_{index}.ass"
                 with open(ass_file, "w", encoding="utf-8") as f:
                     f.write(ass_content)
                 
@@ -578,12 +743,8 @@ async def _create_segment_video(
     if has_audio:
         cmd.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
     else:
-        # 无音频时添加静音
-        cmd.extend([
-            "-f", "lavfi",
-            "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100:d={duration_seconds}",
-            "-c:a", "aac", "-b:a", "128k"
-        ])
+        # 静音源已在输入阶段添加，这里只需指定时长和编码
+        cmd.extend(["-t", str(duration_seconds), "-c:a", "aac", "-b:a", "128k"])
     
     cmd.extend(["-y", str(output_path)])
     
@@ -597,6 +758,145 @@ async def _create_segment_video(
         raise Exception(f"FFmpeg 错误 (段落 {index}): {process.stderr[:500]}")
     
     return output_path
+
+
+async def _concat_scene_videos(
+    video_paths: List[Path],
+    output_path: Path,
+    audio_path: Optional[str],
+    total_duration: float,
+    narration_text: str,
+    on_screen_text: str,
+    temp_dir: Path,
+    config: dict,
+    index: int,
+    width: int,
+    height: int
+):
+    """合并多个场景视频片段，添加音频和字幕"""
+    if not video_paths:
+        raise ValueError("没有可合并的场景视频片段")
+    
+    # 创建文件列表
+    concat_file = temp_dir / f"scene_concat_{output_path.stem}.txt"
+    with open(concat_file, "w", encoding="utf-8") as f:
+        for vp in video_paths:
+            f.write(f"file '{vp.name}'\n")
+    
+    # 确保输出路径是绝对路径
+    abs_output_path = output_path.resolve()
+    abs_concat_file = concat_file.resolve()
+    
+    # 构建命令
+    cmd = [settings.FFMPEG_PATH]
+    
+    # 输入：场景视频列表
+    cmd.extend(["-f", "concat", "-safe", "0", "-i", str(abs_concat_file)])
+    
+    # 输入音频（如果有）
+    has_audio = False
+    if audio_path:
+        full_audio_path = _resolve_asset_path(audio_path)
+        logger.debug(f"场景合并音频路径: {audio_path} -> {full_audio_path}, 存在: {full_audio_path.exists()}")
+        if full_audio_path.exists():
+            cmd.extend(["-i", str(full_audio_path)])
+            has_audio = True
+        else:
+            logger.warning(f"音频文件不存在，跳过音频: {full_audio_path}")
+    
+    # 构建视频滤镜（添加字幕）
+    is_portrait = config.get("is_portrait", True)
+    subtitle_config = config.get("subtitle", {})
+    burn_subtitle = config.get("burn_subtitle", True)
+    subtitle_enabled = subtitle_config.get("enabled", True) if subtitle_config else config.get("subtitle_enabled", True)
+    
+    vf_parts = []
+    max_chars_per_line = 18 if is_portrait else 28
+    
+    if subtitle_enabled and burn_subtitle:
+        font_file = subtitle_config.get("font_file", "C\\\\:/Windows/Fonts/msyh.ttc") if subtitle_config else "C\\\\:/Windows/Fonts/msyh.ttc"
+        
+        # 屏幕文字配置（顶部）
+        on_screen_config = subtitle_config.get("on_screen", {}) if subtitle_config else {}
+        on_screen_font_size = on_screen_config.get("font_size", 48)
+        on_screen_font_color = on_screen_config.get("font_color", "white")
+        on_screen_bg_color = on_screen_config.get("bg_color", "black@0.6")
+        on_screen_margin = on_screen_config.get("margin", 60)
+        
+        # 旁白字幕配置（底部）
+        narration_config = subtitle_config.get("narration", {}) if subtitle_config else {}
+        narration_font_size = narration_config.get("font_size", 40)
+        narration_margin = narration_config.get("margin", 80)
+        
+        # 添加屏幕文字（顶部）
+        if on_screen_text and on_screen_text.strip():
+            on_screen_file = temp_dir / f"concat_onscreen_{index}.txt"
+            with open(on_screen_file, "w", encoding="utf-8") as f:
+                f.write(on_screen_text.strip())
+            on_screen_file_path = str(on_screen_file.resolve()).replace("\\", "/").replace(":", "\\:")
+            vf_parts.append(
+                f"drawtext=textfile='{on_screen_file_path}':"
+                f"fontfile='{font_file}':"
+                f"fontsize={on_screen_font_size}:"
+                f"fontcolor={on_screen_font_color}:"
+                f"x=(w-text_w)/2:"
+                f"y={on_screen_margin}:"
+                f"box=1:boxcolor={on_screen_bg_color}:boxborderw=10"
+            )
+        
+        # 添加旁白字幕（底部）- 使用 ASS 字幕
+        if narration_text and narration_text.strip():
+            sentences = _split_sentences(narration_text.strip())
+            if sentences:
+                ass_content = _generate_ass_subtitle(
+                    sentences=sentences,
+                    duration_seconds=total_duration,
+                    width=width,
+                    height=height,
+                    font_size=narration_font_size,
+                    font_color="FFFFFF",
+                    margin_bottom=narration_margin,
+                    max_chars_per_line=max_chars_per_line
+                )
+                ass_file = temp_dir / f"concat_subtitle_{index}.ass"
+                with open(ass_file, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
+                ass_file_path = str(ass_file.resolve()).replace("\\", "/").replace(":", "\\:")
+                vf_parts.append(f"ass='{ass_file_path}'")
+    
+    # 构建输出命令
+    if vf_parts:
+        # 需要重新编码以添加字幕滤镜
+        vf = ",".join(vf_parts)
+        cmd.extend(["-vf", vf])
+        cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "23"])
+    else:
+        # 无字幕，直接复制视频流
+        cmd.extend(["-c:v", "copy"])
+    
+    if has_audio:
+        cmd.extend([
+            "-c:a", "aac", "-b:a", "128k",
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-shortest"
+        ])
+    else:
+        # 保留原有的静音音轨
+        cmd.extend(["-c:a", "copy"])
+    
+    cmd.extend(["-y", str(abs_output_path)])
+    
+    logger.debug(f"FFmpeg scene concat 命令: {' '.join(cmd)}")
+    
+    # 在 temp_dir 中执行
+    process = subprocess.run(cmd, capture_output=True, text=True, cwd=str(temp_dir))
+    
+    if process.returncode != 0:
+        logger.error(f"FFmpeg scene concat 错误: {process.stderr}")
+        raise Exception(f"FFmpeg scene concat 错误: {process.stderr[:500]}")
+    
+    logger.info(f"场景视频合并完成: {output_path}")
 
 
 async def _concat_videos(

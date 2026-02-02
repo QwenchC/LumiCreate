@@ -32,6 +32,7 @@ class SegmentUpdate(BaseModel):
     mood: Optional[str] = Field(None, max_length=100, description="氛围")
     shot_type: Optional[str] = Field(None, max_length=100, description="镜头类型")
     order_index: Optional[int] = Field(None, ge=0, description="排序索引")
+    segment_metadata: Optional[dict] = Field(None, description="段落元数据（包含 visual_prompts 等）")
 
 
 class SegmentResponse(SegmentBase):
@@ -43,6 +44,7 @@ class SegmentResponse(SegmentBase):
     selected_image_asset_id: Optional[int]
     audio_asset_id: Optional[int]
     duration_ms: Optional[int]
+    segment_metadata: Optional[dict] = Field(None, description="段落元数据")
     created_at: datetime
     updated_at: datetime
     

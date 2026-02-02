@@ -64,6 +64,7 @@ export interface SegmenterConfig {
   min_segment_chars: number
   max_segment_chars: number
   prefer_natural_breaks: boolean
+  scenes_per_segment: number
 }
 
 export interface ComfyUIConfig {

@@ -127,6 +127,9 @@ export const segmentApi = {
   selectImage: (segmentId: number, assetId: number) =>
     api.post(`/segments/${segmentId}/images/${assetId}/select`),
   
+  selectSceneImage: (segmentId: number, sceneIndex: number, assetId: number) =>
+    api.post(`/segments/${segmentId}/scenes/${sceneIndex}/select/${assetId}`),
+  
   // 音频相关
   generateAudio: (segmentId: number, data?: { override_text?: string }) =>
     api.post(`/segments/${segmentId}/audio/generate`, data || {}),
