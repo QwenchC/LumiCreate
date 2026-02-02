@@ -651,8 +651,75 @@ async def _create_single_image_segment(
     
     is_portrait = config.get("is_portrait", True)
     
-    # 视频滤镜：缩放并填充（保持比例，黑边填充）
-    vf_parts = [f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"]
+    # Ken Burns 效果配置
+    kenburns_enabled = config.get("kenburns_enabled", True)
+    kenburns_intensity = config.get("kenburns_intensity", 0.15)  # 0.05-0.3
+    
+    # 转场效果配置（淡入淡出）
+    transition_type = config.get("transition_type", "淡入淡出")
+    transition_duration = config.get("transition_duration", 0.3)
+    
+    # 视频滤镜
+    vf_parts = []
+    
+    if kenburns_enabled:
+        # 使用 zoompan 滤镜实现 Ken Burns 效果
+        # 注意：使用基于 on (当前帧号) 的线性表达式，避免自引用导致的抖动
+        fps = int(frame_rate)
+        total_frames = int(duration_seconds * fps)
+        
+        # 随机选择不同的动效模式（基于 index 确保每个片段不同）
+        import hashlib
+        effect_seed = int(hashlib.md5(str(index).encode()).hexdigest()[:8], 16) % 4
+        
+        # 降低动效强度以减少抖动感（原来的 0.15 太强）
+        intensity = min(kenburns_intensity, 0.08)
+        zoom_start = 1.0
+        zoom_end = 1.0 + intensity
+        
+        # 使用线性插值表达式，基于 on（当前帧号）计算，避免累积误差
+        if effect_seed == 0:
+            # 模式1: 缓慢放大 + 居中
+            zoom_expr = f"{zoom_start}+{intensity}*on/{total_frames}"
+            x_expr = "iw/2-(iw/zoom/2)"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif effect_seed == 1:
+            # 模式2: 缓慢缩小 + 居中
+            zoom_expr = f"{zoom_end}-{intensity}*on/{total_frames}"
+            x_expr = "iw/2-(iw/zoom/2)"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif effect_seed == 2:
+            # 模式3: 放大 + 轻微向右平移
+            zoom_expr = f"{zoom_start}+{intensity}*on/{total_frames}"
+            x_expr = f"iw/2-(iw/zoom/2)+{intensity}*iw/3*on/{total_frames}"
+            y_expr = "ih/2-(ih/zoom/2)"
+        else:
+            # 模式4: 放大 + 轻微向左平移
+            zoom_expr = f"{zoom_start}+{intensity}*on/{total_frames}"
+            x_expr = f"iw/2-(iw/zoom/2)-{intensity}*iw/3*on/{total_frames}"
+            y_expr = "ih/2-(ih/zoom/2)"
+        
+        # zoompan 滤镜 - 先缩放图片以适应输出尺寸
+        vf_parts.append(f"scale=8000:-1")
+        zoompan_filter = (
+            f"zoompan=z='{zoom_expr}':"
+            f"x='{x_expr}':"
+            f"y='{y_expr}':"
+            f"d={total_frames}:"
+            f"s={width}x{height}:"
+            f"fps={fps}"
+        )
+        vf_parts.append(zoompan_filter)
+    else:
+        # 无 Ken Burns，使用普通缩放填充
+        vf_parts.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black")
+    
+    # 添加淡入淡出转场效果（在每个片段的开头和结尾）
+    if transition_type == "淡入淡出" and transition_duration > 0:
+        fade_frames = int(transition_duration * int(frame_rate))
+        # 淡入（开头）和淡出（结尾）
+        vf_parts.append(f"fade=t=in:st=0:d={transition_duration}")
+        vf_parts.append(f"fade=t=out:st={duration_seconds - transition_duration}:d={transition_duration}")
     
     # 字幕配置
     subtitle_config = config.get("subtitle", {})
@@ -733,10 +800,12 @@ async def _create_single_image_segment(
     cmd.extend([
         "-vf", vf,
         "-c:v", "libx264",
+        "-profile:v", "main",  # 兼容更多播放器
         "-preset", "fast",
         "-crf", "23",
         "-r", frame_rate,
-        "-pix_fmt", "yuv420p"
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart"  # 支持流式播放和更好的兼容性
     ])
     
     # 音频编码
@@ -905,35 +974,35 @@ async def _concat_videos(
     config: dict,
     temp_dir: Path
 ):
-    """合并多个视频片段"""
+    """合并多个视频片段
+    
+    注意：为了性能考虑，使用简单的 concat 合并。
+    转场效果通过在每个片段的开头/结尾添加淡入淡出来实现（在 _create_single_image_segment 中处理）
+    """
     if not video_paths:
         raise ValueError("没有可合并的视频片段")
     
-    # 创建文件列表
+    # 确保输出路径是绝对路径
+    abs_output_path = output_path.resolve()
+    
+    # 使用简单的 concat 合并（高性能）
     concat_file = temp_dir / "concat_list.txt"
     with open(concat_file, "w", encoding="utf-8") as f:
         for vp in video_paths:
-            # 只使用文件名，因为 concat 列表文件和视频片段在同一目录
-            # 这样避免路径拼接问题
             f.write(f"file '{vp.name}'\n")
     
-    # 确保输出路径是绝对路径，因为我们要切换工作目录
-    abs_output_path = output_path.resolve()
     abs_concat_file = concat_file.resolve()
-    
-    # 简单 concat
     cmd = [
         settings.FFMPEG_PATH,
         "-f", "concat",
         "-safe", "0",
         "-i", str(abs_concat_file),
         "-c", "copy",
+        "-movflags", "+faststart",  # 支持流式播放
         "-y", str(abs_output_path)
     ]
     
     logger.debug(f"FFmpeg concat 命令: {' '.join(cmd)}")
-    
-    # 在 temp_dir 中执行，这样 concat 列表中的相对路径才能正确解析
     process = subprocess.run(cmd, capture_output=True, text=True, cwd=str(temp_dir))
     
     if process.returncode != 0:
