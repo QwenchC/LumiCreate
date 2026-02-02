@@ -102,8 +102,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { ElMessage } from 'element-plus'
 import { jobApi } from '@/api'
+
+dayjs.extend(utc)
 import type { Job } from '@/stores'
 
 const jobs = ref<Job[]>([])
@@ -147,7 +150,8 @@ const queuedJobs = computed(() => jobs.value.filter(j => j.status === 'queued'))
 const failedJobs = computed(() => jobs.value.filter(j => j.status === 'failed'))
 const succeededJobs = computed(() => jobs.value.filter(j => j.status === 'succeeded'))
 
-const formatDate = (date: string) => dayjs(date).format('YYYY-MM-DD HH:mm:ss')
+// 后端返回 UTC 时间，转换到 UTC+8 显示
+const formatDate = (date: string) => dayjs.utc(date).utcOffset(8).format('YYYY-MM-DD HH:mm:ss')
 
 const getJobTypeLabel = (type: string) => {
   const map: Record<string, string> = {

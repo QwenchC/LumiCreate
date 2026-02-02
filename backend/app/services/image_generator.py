@@ -207,7 +207,7 @@ async def generate_segment_images(
 
 async def execute_image_generation(
     db: AsyncSession,
-    job: Job
+    job_or_id
 ) -> Dict[str, Any]:
     """
     直接执行图片生成（不通过 Celery）
@@ -215,7 +215,7 @@ async def execute_image_generation(
     
     Args:
         db: 数据库会话
-        job: 任务对象
+        job_or_id: 任务对象或任务ID
     
     Returns:
         生成结果
@@ -224,6 +224,20 @@ async def execute_image_generation(
     from datetime import datetime
     from app.models.asset import Asset, AssetType
     from app.services.pollinations_client import generate_image_pollinations
+    from app.models.job import Job
+    
+    # 支持传入 job 对象或 job_id
+    if isinstance(job_or_id, int):
+        job_result = await db.execute(select(Job).where(Job.id == job_or_id))
+        job = job_result.scalar_one_or_none()
+        if not job:
+            return {"success": False, "error": f"任务不存在: {job_or_id}"}
+    else:
+        # 如果传入的是 job 对象，需要重新从当前会话获取
+        job_result = await db.execute(select(Job).where(Job.id == job_or_id.id))
+        job = job_result.scalar_one_or_none()
+        if not job:
+            return {"success": False, "error": f"任务不存在: {job_or_id.id}"}
     
     params = job.params
     segment_id = params["segment_id"]

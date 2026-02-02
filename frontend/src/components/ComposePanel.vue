@@ -168,7 +168,10 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { useSegmentStore, useJobStore, type Job } from '@/stores'
+
+dayjs.extend(utc)
 import { jobApi } from '@/api'
 
 const props = defineProps<{
@@ -248,7 +251,8 @@ const formatDuration = (ms: number) => {
 }
 
 const formatDate = (date: string) => {
-  return dayjs(date).format('YYYY-MM-DD HH:mm')
+  // 后端返回 UTC 时间，转换到 UTC+8 显示
+  return dayjs.utc(date).utcOffset(8).format('YYYY-MM-DD HH:mm')
 }
 
 const getJobStatusType = (status: string) => {

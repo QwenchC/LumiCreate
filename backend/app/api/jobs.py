@@ -1,6 +1,7 @@
 """
 任务管理 API 路由
 """
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -147,7 +148,10 @@ async def generate_all_project_images(
     request: BatchJobRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """为项目所有段落生成图片"""
+    """为项目所有段落生成图片（限制并发执行）"""
+    from app.services.image_generator import execute_image_generation
+    from app.db.database import async_session
+    
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -159,10 +163,55 @@ async def generate_all_project_images(
         segment_ids=request.segment_ids
     )
     
+    if not jobs:
+        return {
+            "status": "success",
+            "message": "没有需要生成的段落",
+            "job_ids": [],
+            "results": []
+        }
+    
+    # 限制并发数为5，避免服务限流和数据库会话冲突
+    MAX_CONCURRENT = 5
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    
+    async def generate_one(job):
+        async with semaphore:
+            # 每个任务使用独立的数据库会话
+            async with async_session() as task_db:
+                gen_result = await execute_image_generation(task_db, job)
+                return {
+                    "job_id": job.id,
+                    "segment_id": job.segment_id,
+                    "success": gen_result.get("success", False),
+                    "asset_ids": gen_result.get("asset_ids", []),
+                    "error": gen_result.get("error")
+                }
+    
+    # 使用 asyncio.gather 并行执行（受信号量限制）
+    results = await asyncio.gather(*[generate_one(job) for job in jobs], return_exceptions=True)
+    
+    # 处理可能的异常
+    processed_results = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            processed_results.append({
+                "job_id": jobs[i].id,
+                "segment_id": jobs[i].segment_id,
+                "success": False,
+                "asset_ids": [],
+                "error": str(r)
+            })
+        else:
+            processed_results.append(r)
+    
+    success_count = sum(1 for r in processed_results if r["success"])
+    
     return {
         "status": "success",
-        "message": f"已创建 {len(jobs)} 个图片生成任务",
-        "job_ids": [job.id for job in jobs]
+        "message": f"已完成 {success_count}/{len(jobs)} 个图片生成",
+        "job_ids": [job.id for job in jobs],
+        "results": processed_results
     }
 
 
@@ -172,8 +221,9 @@ async def generate_all_project_audio(
     request: BatchJobRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    """为项目所有段落生成音频"""
+    """为项目所有段落生成音频（限制并发执行）"""
     from app.services.audio_generator import execute_audio_generation
+    from app.db.database import async_session
     
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -186,26 +236,57 @@ async def generate_all_project_audio(
         segment_ids=request.segment_ids
     )
     
-    # 同步执行所有音频生成任务
-    results = []
-    for job in jobs:
-        gen_result = await execute_audio_generation(db, job)
-        results.append({
-            "job_id": job.id,
-            "segment_id": job.segment_id,
-            "success": gen_result.get("success", False),
-            "asset_id": gen_result.get("asset_id"),
-            "duration_ms": gen_result.get("duration_ms"),
-            "error": gen_result.get("error")
-        })
+    if not jobs:
+        return {
+            "status": "success",
+            "message": "没有需要生成的段落",
+            "job_ids": [],
+            "results": []
+        }
     
-    success_count = sum(1 for r in results if r["success"])
+    # 限制并发数为3，edge-tts 对并发较敏感
+    MAX_CONCURRENT = 3
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+    
+    async def generate_one(job):
+        async with semaphore:
+            # 每个任务使用独立的数据库会话
+            async with async_session() as task_db:
+                gen_result = await execute_audio_generation(task_db, job)
+                return {
+                    "job_id": job.id,
+                    "segment_id": job.segment_id,
+                    "success": gen_result.get("success", False),
+                    "asset_id": gen_result.get("asset_id"),
+                    "duration_ms": gen_result.get("duration_ms"),
+                    "error": gen_result.get("error")
+                }
+    
+    # 使用 asyncio.gather 并行执行（受信号量限制）
+    results = await asyncio.gather(*[generate_one(job) for job in jobs], return_exceptions=True)
+    
+    # 处理可能的异常
+    processed_results = []
+    for i, r in enumerate(results):
+        if isinstance(r, Exception):
+            processed_results.append({
+                "job_id": jobs[i].id,
+                "segment_id": jobs[i].segment_id,
+                "success": False,
+                "asset_id": None,
+                "duration_ms": None,
+                "error": str(r)
+            })
+        else:
+            processed_results.append(r)
+    
+    success_count = sum(1 for r in processed_results if r["success"])
     
     return {
         "status": "success",
         "message": f"已完成 {success_count}/{len(jobs)} 个音频生成",
         "job_ids": [job.id for job in jobs],
-        "results": results
+        "results": processed_results
     }
 
 

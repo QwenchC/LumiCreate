@@ -81,19 +81,32 @@ async def generate_segment_audio(
 
 async def execute_audio_generation(
     db: AsyncSession,
-    job: Job
+    job_or_id
 ) -> Dict[str, Any]:
     """
     同步执行音频生成任务
     
     Args:
         db: 数据库会话
-        job: 任务对象
+        job_or_id: 任务对象或任务ID
     
     Returns:
         Dict: 执行结果
     """
     try:
+        # 支持传入 job 对象或 job_id
+        if isinstance(job_or_id, int):
+            job_result = await db.execute(select(Job).where(Job.id == job_or_id))
+            job = job_result.scalar_one_or_none()
+            if not job:
+                return {"success": False, "error": f"任务不存在: {job_or_id}"}
+        else:
+            # 如果传入的是 job 对象，需要重新从当前会话获取
+            job_result = await db.execute(select(Job).where(Job.id == job_or_id.id))
+            job = job_result.scalar_one_or_none()
+            if not job:
+                return {"success": False, "error": f"任务不存在: {job_or_id.id}"}
+        
         logger.info(f"开始执行音频生成任务: job_id={job.id}")
         
         # 更新任务状态为运行中

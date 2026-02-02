@@ -68,7 +68,10 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { useProjectStore } from '@/stores'
+
+dayjs.extend(utc)
 
 const router = useRouter()
 const store = useProjectStore()
@@ -85,8 +88,8 @@ onMounted(() => {
 })
 
 const formatDate = (date: string) => {
-  // 使用固定 +8 时区显示（本地时区为 UTC+8）
-  return dayjs(date).utcOffset(8).format('YYYY-MM-DD HH:mm')
+  // 后端返回的是 UTC 时间，先解析为 UTC，再转换到 UTC+8 显示
+  return dayjs.utc(date).utcOffset(8).format('YYYY-MM-DD HH:mm')
 }
 
 const getStatusType = (status: string) => {
