@@ -26,10 +26,17 @@ from app.api.settings import get_pollinations_config
 logger = logging.getLogger(__name__)
 
 
-async def translate_prompt_to_english(prompt: str) -> str:
+async def translate_prompt_to_english(
+    prompt: str,
+    character_description: str = ""
+) -> str:
     """
     将中文提示词转换为 Stable Diffusion 风格的英文标签格式
-    使用 DeepSeek API 进行转换
+    同时智能处理主角描述的融合
+    
+    Args:
+        prompt: 场景描述（可能包含【主角】【场景】标记）
+        character_description: 可选的主角描述（如果 prompt 中已包含则忽略）
     """
     from app.services.deepseek_client import call_deepseek
     
@@ -41,7 +48,37 @@ async def translate_prompt_to_english(prompt: str) -> str:
     if chinese_chars == 0:
         return prompt
     
-    system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts.
+    # 检查是否包含主角标记
+    has_character_tag = "【主角】" in prompt and "【场景】" in prompt
+    
+    if has_character_tag:
+        # 使用融合模式的系统提示词
+        system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts, with special handling for protagonist consistency.
+
+The input contains two parts:
+- 【主角】: The protagonist's appearance description (should be applied when the scene contains the protagonist)
+- 【场景】: The scene description
+
+**Critical Rules for Protagonist Handling**:
+1. **Gender Must Match**: Only apply protagonist description if gender matches the character in scene
+   - If protagonist is male (contains 男/他/少年), don't apply to female characters (女/她/少女)
+   - If protagonist is female, don't apply to male characters
+2. **Identify Non-Protagonists**: Keep original descriptions for enemies, side characters, love interests, etc.
+3. **No Character Scene**: If scene has no people, just translate the scene without protagonist
+4. **Multiple Characters**: Only apply protagonist desc to the actual protagonist, keep others as-is
+
+Convert to English SD prompt format:
+- Use comma-separated tags/phrases
+- Include: masterpiece, best quality, highly detailed
+- For protagonist (when applicable): describe with gender, hair, eyes, clothing from 【主角】
+- For non-protagonists: translate their original description
+- For environment: location, lighting, atmosphere
+- Use weight syntax like (important:1.3) for emphasis
+
+Only output the prompt tags, no explanations."""
+    else:
+        # 普通翻译模式
+        system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts.
 
 Convert the Chinese text into English tags/phrases in the standard SD prompt format:
 - Use comma-separated English words and short phrases

@@ -142,9 +142,29 @@ async def generate_segment_images(
     if not image_config:
         image_config = project.project_config.get("comfyui", {})
     
+    # 获取人物一致性配置
+    character_description = image_config.get("character_description", "")
+    character_consistency_enabled = image_config.get("character_consistency_enabled", True)
+    
     # 检查是否有多场景 visual_prompts
     segment_metadata = segment.segment_metadata or {}
     visual_prompts = segment_metadata.get("visual_prompts", [])
+    
+    # 如果启用人物一致性，对所有提示词进行融合处理
+    if character_description and character_consistency_enabled:
+        from app.services.prompt_merger import merge_character_with_scene
+        
+        # 处理多场景提示词
+        if visual_prompts and len(visual_prompts) >= 1:
+            merged_prompts = []
+            for prompt in visual_prompts:
+                merged = merge_character_with_scene(
+                    scene_prompt=prompt,
+                    character_description=character_description
+                )
+                merged_prompts.append(merged)
+            visual_prompts = merged_prompts
+            logger.info(f"段落 {segment.id} 已应用人物一致性融合 ({len(visual_prompts)} 个场景)")
     
     # 获取每个场景的候选图数量
     candidates_per_scene = image_config.get("candidates_per_segment", 3)
@@ -168,6 +188,16 @@ async def generate_segment_images(
         # 单场景候选图模式（向后兼容）
         generation_mode = "candidates"
         base_prompt = override_prompt or segment.visual_prompt or ""
+        
+        # 对单场景也应用人物一致性
+        if character_description and character_consistency_enabled and base_prompt:
+            from app.services.prompt_merger import merge_character_with_scene
+            base_prompt = merge_character_with_scene(
+                scene_prompt=base_prompt,
+                character_description=character_description
+            )
+            logger.info(f"段落 {segment.id} 已应用人物一致性融合 (单场景)")
+        
         prompts_to_generate = []
         for candidate_idx in range(candidates_per_scene):
             prompts_to_generate.append({

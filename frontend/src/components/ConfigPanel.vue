@@ -523,6 +523,34 @@
               </el-col>
             </el-row>
           </div>
+          
+          <!-- 人物一致性配置（通用，适用于所有引擎） -->
+          <div class="config-subsection">
+            <div class="subsection-title">
+              <span>🎭 人物一致性</span>
+              <el-switch 
+                v-model="localConfig.image_generation.character_consistency_enabled" 
+                size="small"
+                style="margin-left: 10px;"
+              />
+            </div>
+            <el-row :gutter="20" v-if="localConfig.image_generation.character_consistency_enabled">
+              <el-col :span="24">
+                <el-form-item label="主角外观描述">
+                  <el-input 
+                    v-model="localConfig.image_generation.character_description" 
+                    type="textarea"
+                    :rows="3"
+                    placeholder="详细描述主角的外观特征，例如：&#10;一位年轻女子，长黑发，杏眼，穿着白色汉服，气质温婉&#10;或：年轻男子，短发，剑眉星目，穿着蓝色长袍，英俊挺拔"
+                  />
+                  <div class="form-tip">
+                    系统会智能将此描述融合到每个场景中，替换场景中的人物描述，确保主角外观一致。
+                    留空则不进行人物一致性处理。适用于 Pollinations 和 ComfyUI 两种引擎。
+                  </div>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </div>
         </el-collapse-item>
         
         <!-- ========== 语音配置 ========== -->
@@ -937,7 +965,10 @@ const defaultConfig = {
     max_retries: 3,
     fallback_workflow_id: null,
     character_lora_id: null,
-    reference_image_id: null
+    reference_image_id: null,
+    // 人物一致性
+    character_description: '',
+    character_consistency_enabled: true
   },
   // 保留 comfyui 字段以兼容旧数据
   comfyui: {

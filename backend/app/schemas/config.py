@@ -217,6 +217,16 @@ class ComfyUIConfig(BaseModel):
     # 主体一致性（预留）
     character_lora_id: Optional[str] = Field(None, description="角色LoRA ID（预留）")
     reference_image_id: Optional[str] = Field(None, description="参考图ID（预留）")
+    
+    # 主角描述（用于人物一致性）
+    character_description: Optional[str] = Field(
+        None, 
+        description="主角外观描述，会自动注入到每个场景的提示词中"
+    )
+    character_consistency_enabled: bool = Field(
+        True, 
+        description="是否启用人物一致性融合"
+    )
 
 
 # ============ 语音配置 ============
