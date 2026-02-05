@@ -76,14 +76,15 @@ export const scriptApi = {
   },
   
   // 分阶段生成文案（推荐用于长文本）
-  generatePhased: (projectId: number, data?: { topic?: string; additional_instructions?: string }) => {
+  generatePhased: (projectId: number, data?: { topic?: string; additional_instructions?: string }, signal?: AbortSignal) => {
     const body = JSON.stringify(data || {})
     return fetch(`/api/scripts/projects/${projectId}/generate/phased`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body
+      body,
+      signal
     })
   },
   

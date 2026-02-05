@@ -53,25 +53,37 @@ async def translate_prompt_to_english(
     
     if has_character_tag:
         # 使用融合模式的系统提示词
-        system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts, with special handling for protagonist consistency.
+        system_prompt = """You are an expert at converting Chinese scene descriptions into Stable Diffusion image prompts, with careful handling for protagonist consistency.
 
 The input contains two parts:
-- 【主角】: The protagonist's appearance description (should be applied when the scene contains the protagonist)
+- 【主角】: The protagonist's appearance description (ONLY use when scene actually contains the protagonist)
 - 【场景】: The scene description
 
-**Critical Rules for Protagonist Handling**:
-1. **Gender Must Match**: Only apply protagonist description if gender matches the character in scene
-   - If protagonist is male (contains 男/他/少年), don't apply to female characters (女/她/少女)
-   - If protagonist is female, don't apply to male characters
-2. **Identify Non-Protagonists**: Keep original descriptions for enemies, side characters, love interests, etc.
-3. **No Character Scene**: If scene has no people, just translate the scene without protagonist
-4. **Multiple Characters**: Only apply protagonist desc to the actual protagonist, keep others as-is
+**Critical Rules - MUST FOLLOW**:
+
+1. **Check if Protagonist is in Scene First**:
+   - Look for protagonist indicators in scene: 他/她/主角/少年/少女/男子/女子 or other references to the main character
+   - If scene is about objects, landscapes, buildings, animals without the protagonist → DO NOT include protagonist description
+   - If scene describes other characters only (敌人/对手/路人/其他人) → DO NOT include protagonist description
+   
+2. **Gender Must Match** (only when protagonist IS in scene):
+   - If protagonist is male (男/他/少年/男子), only apply to male character references
+   - If protagonist is female (女/她/少女/女子), only apply to female character references
+   - For love interests/other characters of different gender: keep their original description
+   
+3. **Multiple Characters**:
+   - Only apply protagonist desc to the actual protagonist
+   - Keep original descriptions for: enemies (敌人), opponents (对手), companions (同伴), love interests (恋人/情人)
+
+4. **No Protagonist = No Protagonist Description**:
+   - Scenery only → just translate the scene
+   - Objects/items only → just translate the scene
+   - Other people only → just translate their descriptions
 
 Convert to English SD prompt format:
 - Use comma-separated tags/phrases
 - Include: masterpiece, best quality, highly detailed
-- For protagonist (when applicable): describe with gender, hair, eyes, clothing from 【主角】
-- For non-protagonists: translate their original description
+- For protagonist (ONLY when confirmed present): describe with gender, hair, eyes, clothing from 【主角】
 - For environment: location, lighting, atmosphere
 - Use weight syntax like (important:1.3) for emphasis
 

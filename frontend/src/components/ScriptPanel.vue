@@ -9,9 +9,17 @@
           style="width: 300px"
           :disabled="generating"
         />
-        <el-button type="primary" @click="handleGenerate" :loading="generating">
+        <el-button type="primary" @click="handleGenerate" :loading="generating" :disabled="generating">
           <el-icon><EditPen /></el-icon>
           {{ generating ? '生成中...' : '生成文案' }}
+        </el-button>
+        <el-button v-if="generating" type="danger" @click="handleAbort">
+          <el-icon><CloseBold /></el-icon>
+          终止生成
+        </el-button>
+        <el-button v-if="rawScript && !generating" type="warning" @click="handleClear">
+          <el-icon><Delete /></el-icon>
+          清除文案
         </el-button>
       </div>
       <div class="header-right">
@@ -224,6 +232,7 @@ const showSegmentEditor = ref(false)
 const showRawEditor = ref(false)
 const editingSegment = ref<Partial<Segment>>({})
 const editingVisualPrompts = ref<string[]>([])
+const abortController = ref<AbortController | null>(null)
 
 // 流式生成状态
 const streamStatus = ref('准备生成...')
@@ -267,9 +276,16 @@ const handleGenerate = async () => {
   generatedChars.value = 0
   generationProgress.value = { currentChapter: 0, totalChapters: 0, phase: '' }
   
+  // 创建新的 AbortController
+  abortController.value = new AbortController()
+  
   try {
     // 使用分阶段流式生成（更适合长文本）
-    const response = await scriptApi.generatePhased(props.projectId, { topic: topic.value })
+    const response = await scriptApi.generatePhased(
+      props.projectId, 
+      { topic: topic.value },
+      abortController.value.signal
+    )
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
@@ -387,11 +403,36 @@ const handleGenerate = async () => {
     }
     
   } catch (error: any) {
-    console.error('生成文案失败:', error)
-    ElMessage.error(error.message || '生成文案失败')
+    // 检查是否是用户主动终止
+    if (error.name === 'AbortError') {
+      streamStatus.value = '已终止生成'
+      ElMessage.info('已终止文案生成')
+    } else {
+      console.error('生成文案失败:', error)
+      ElMessage.error(error.message || '生成文案失败')
+    }
   } finally {
     generating.value = false
+    abortController.value = null
   }
+}
+
+// 终止生成
+const handleAbort = () => {
+  if (abortController.value) {
+    abortController.value.abort()
+    streamStatus.value = '正在终止...'
+  }
+}
+
+// 清除文案
+const handleClear = () => {
+  rawScript.value = ''
+  generatedChars.value = 0
+  streamStatus.value = ''
+  generationProgress.value = { currentChapter: 0, totalChapters: 0, phase: '' }
+  script.value = null
+  ElMessage.success('已清除文案')
 }
 
 const handleParse = async () => {
